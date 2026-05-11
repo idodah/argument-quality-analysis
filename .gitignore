@@ -1,0 +1,41 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Datasets (external)
+Webis-CMV-20/
+winning-args-corpus/
+arguments_data/
+
+# Data files
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.tsv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Excluded scripts / dirs
+summarize_gpt_4o_mini.py
+summarize_inference.py
+summarize_inference.ipynb
+slurm/

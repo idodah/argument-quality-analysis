@@ -1,0 +1,18 @@
+[project]
+name = "argument-quality-analysis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "convokit>=4.1.1",
+    "datasets>=4.8.5",
+    "dotenv>=0.9.9",
+    "openai>=2.36.0",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.2",
+    "tiktoken>=0.12.0",
+    "together>=2.12.0",
+    "xgboost>=3.2.0",
+    "zenodo-get>=3.0.0",
+]
