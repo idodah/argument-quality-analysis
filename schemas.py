@@ -1,6 +1,5 @@
 from datetime import date
 from pydantic import BaseModel
-from typing import Optional, Self
 
 class ArgumentPair(BaseModel):
     thread_id: str
@@ -9,4 +8,3 @@ class ArgumentPair(BaseModel):
     delta_argument: str
     nodelta_argument: str
     date: date | None
-    summary: Optional[str] = None

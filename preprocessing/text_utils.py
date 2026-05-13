@@ -6,9 +6,9 @@ import re
 
 import tiktoken
 
-_OPENAI_EMBED_MODEL = "text-embedding-3-small"
+# _OPENAI_EMBED_MODEL = "text-embedding-3-small"
 
-_tiktoken_enc = tiktoken.encoding_for_model(_OPENAI_EMBED_MODEL)
+# _tiktoken_enc = tiktoken.encoding_for_model(_OPENAI_EMBED_MODEL)
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+")
 _HTML_ENTITY_RE = re.compile(r"&\w+;")
@@ -21,8 +21,8 @@ _EXCEL_MAX_CHARS = 32767
 _MIN_SENTENCE_WORDS = 4
 
 
-def count_tokens(text: str) -> int:
-    return len(_tiktoken_enc.encode(text))
+# def count_tokens(text: str) -> int:
+#     return len(_tiktoken_enc.encode(text))
 
 
 def clean_text(text: str) -> str:
@@ -50,4 +50,5 @@ def clean_text(text: str) -> str:
     text = "\n".join(cleaned_lines)
 
     text = _WHITESPACE_RE.sub("\n\n", text)
+    text = re.sub(r"_{3,}", "", text)
     return text.strip()

@@ -17,7 +17,11 @@ wheels/
 # Datasets (external)
 Webis-CMV-20/
 winning-args-corpus/
-arguments_data/
+data/
+full_raw_data/
+
+# Model checkpoints
+checkpoints/
 
 # Data files
 *.csv
@@ -35,7 +39,7 @@ arguments_data/
 .DS_Store
 
 # Excluded scripts / dirs
-summarize_gpt_4o_mini.py
-summarize_inference.py
-summarize_inference.ipynb
-slurm/
+# summarize_gpt_4o_mini.py
+# summarize_inference.py
+# summarize_inference.ipynb
+# slurm/

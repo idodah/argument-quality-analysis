@@ -16,34 +16,45 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
-from data_creation import build_webis_raw, build_winning_raw
 from schemas import ArgumentPair
-from text_utils import clean_text, count_tokens
+
+from .data_creation import build_webis_raw, build_winning_raw
+from .text_utils import clean_text #, count_tokens
 
 load_dotenv()
 
 HF_REPO_ID = "idodah/argument-quality-cmv"
-OUT_EXCEL = Path("./argument_quality_preprocessed.xlsx")
+OUT_PARQUET = Path("./data/argument_quality_preprocessed.parquet")
+
+
+_EDIT_PARAGRAPH_RE = re.compile(r"^\s*edit\b.*?(?=\n\s*\n|\Z)", re.IGNORECASE | re.DOTALL | re.MULTILINE)
+
+
+def _strip_edit_paragraphs(text: str) -> str:
+    text = _EDIT_PARAGRAPH_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
     rows = []
     for p in pairs:
         topic = re.sub(r"^CMV:\s*", "", p.topic, flags=re.IGNORECASE).strip()
-        original_post = clean_text(p.original_post)
-        delta_argument = clean_text(p.delta_argument)
-        nodelta_argument = clean_text(p.nodelta_argument)
+        topic = re.sub(r"[.\s]*cmv\s*\.?\s*$", "", topic, flags=re.IGNORECASE).strip()
+        original_post = _strip_edit_paragraphs(clean_text(p.original_post))
+        delta_argument = _strip_edit_paragraphs(clean_text(p.delta_argument))
+        nodelta_argument = _strip_edit_paragraphs(clean_text(p.nodelta_argument))
 
         if not original_post or not delta_argument or not nodelta_argument:
             continue
         if delta_argument == nodelta_argument:
             continue
 
-        delta_tokens = count_tokens(delta_argument)
-        nodelta_tokens = count_tokens(nodelta_argument)
+        # delta_tokens = count_tokens(delta_argument)
+        # nodelta_tokens = count_tokens(nodelta_argument)
 
-        if delta_tokens < 20 or nodelta_tokens < 20:
-            continue
+        # if delta_tokens < 20 or nodelta_tokens < 20:
+        #     continue
 
         rows.append(ArgumentPair(
             thread_id= p.thread_id,
@@ -76,14 +87,22 @@ def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
 
 
 def upload_to_hub(df: pd.DataFrame, repo_id: str = HF_REPO_ID) -> None:
-    from datasets import Dataset
+    from datasets import Dataset, Features, Value
 
     token = os.environ.get("HF_TOKEN")
     if not token:
         raise EnvironmentError("HF_TOKEN not set. Add it to your .env file.")
 
-    ds = Dataset.from_pandas(df, preserve_index=False)
-    ds.push_to_hub(repo_id, token=token,split="full", private=False)
+    features = Features({
+        "thread_id": Value("large_string"),
+        "topic": Value("large_string"),
+        "original_post": Value("large_string"),
+        "delta_argument": Value("large_string"),
+        "nodelta_argument": Value("large_string"),
+        "date": Value("date32"),
+    })
+    ds = Dataset.from_pandas(df, preserve_index=False, features=features)
+    ds.push_to_hub(repo_id, token=token, split="full", private=False)
     print(f"Uploaded to https://huggingface.co/datasets/{repo_id}")
 
 
@@ -102,17 +121,25 @@ if __name__ == "__main__":
     all_rows = webis_rows + winning_rows
     print(f"\nTotal raw pairs: {len(all_rows)}")
 
-    print("\nCleaning, tokenizing, and embedding...")
+    print("\nCleaning")
     df = _enrich(all_rows)
 
     if df.empty:
         raise RuntimeError("No rows survived filtering — aborting before upload.")
 
+    longest_per_thread = (
+        df.assign(_len=df["original_post"].str.len())
+        .sort_values("_len", ascending=False)
+        .drop_duplicates("thread_id")
+        .set_index("thread_id")["original_post"]
+    )
+    df["original_post"] = df["thread_id"].map(longest_per_thread)
+
     print(f"\nFinal dataset: {len(df)} rows, {df['thread_id'].nunique()} unique threads")
     print(f"\nNull counts:\n{df.isnull().sum().to_string()}")
 
-    print(f"\nSaving Excel to {OUT_EXCEL}...")
-    df.to_excel(OUT_EXCEL, index=False)
+    print(f"\nSaving parquet to {OUT_PARQUET}...")
+    df.to_parquet(OUT_PARQUET, index=False)
     print("Done.")
 
     upload_to_hub(df)

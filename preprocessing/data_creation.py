@@ -2,6 +2,7 @@
 import os
 import json
 import bz2
+import math
 import pandas as pd
 from collections import defaultdict
 from convokit import download as convokit_download
@@ -14,6 +15,9 @@ from schemas import ArgumentPair
 WEBIS_DIR = Path("./Webis-CMV-20")
 WINNING_DIR = Path("./winning-args-corpus/winning-args-corpus")
 
+LENGTH_WEIGHT = 1.0
+SCORE_WEIGHT = 0.5
+
 
 if not os.path.exists("./Webis-CMV-20"):
     zenodo_download("3778298", output_dir="./Webis-CMV-20")
@@ -22,24 +26,46 @@ if not os.path.exists("./winning-args-corpus/winning-args-corpus"):
     convokit_download("winning-args-corpus", data_dir="./winning-args-corpus")
 
 
+def _valid_body(body: str | None) -> bool:
+    return bool(body) and body not in ("[deleted]", "[removed]")
+
+
+def _match_score(delta_len: int, delta_score: float, cand_len: int, cand_score: float) -> float:
+    """Lower is better. Combines log-length distance and log-score distance."""
+    len_dist = abs(math.log1p(delta_len) - math.log1p(cand_len))
+    score_dist = abs(math.log1p(max(delta_score, 0)) - math.log1p(max(cand_score, 0)))
+    return LENGTH_WEIGHT * len_dist + SCORE_WEIGHT * score_dist
+
+
 def _get_delta_comment(comment_entry, submission_id):
     for c in comment_entry.get("comments", []):
         if c.get("delta") is True and c.get("level") == 0 and c.get("parent_id") == submission_id:
-            body = c.get("body", "")
-            if body and body not in ("[deleted]", "[removed]"):
+            if _valid_body(c.get("body", "")):
                 return c
     return None
 
 
-def _get_nodelta_comment(comment_entry, submission_id):
+def _get_matched_nodelta_comment(comment_entry, submission_id, delta_comment):
+    """Pick the top-level non-delta reply whose (length, score) is closest to the delta."""
+    delta_len = len(delta_comment.get("body", ""))
+    delta_score = float(delta_comment.get("score") or 0)
+
+    best = None
+    best_dist = math.inf
     for c in comment_entry.get("comments", []):
         if c.get("delta") is True:
             continue
-        if c.get("level") == 0 and c.get("parent_id") == submission_id:
-            body = c.get("body", "")
-            if body and body not in ("[deleted]", "[removed]"):
-                return c
-    return None
+        if c.get("level") != 0 or c.get("parent_id") != submission_id:
+            continue
+        if not _valid_body(c.get("body", "")):
+            continue
+        cand_len = len(c["body"])
+        cand_score = float(c.get("score") or 0)
+        dist = _match_score(delta_len, delta_score, cand_len, cand_score)
+        if dist < best_dist:
+            best_dist = dist
+            best = c
+    return best
 
 
 def build_webis_raw() -> list[ArgumentPair]:
@@ -62,9 +88,10 @@ def build_webis_raw() -> list[ArgumentPair]:
                 date = None
 
             delta_c = _get_delta_comment(pair["delta_comment"], submission_id)
-            nodelta_c = _get_nodelta_comment(pair["nodelta_comment"], submission_id)
-
-            if not delta_c or not nodelta_c:
+            if not delta_c:
+                continue
+            nodelta_c = _get_matched_nodelta_comment(pair["nodelta_comment"], submission_id, delta_c)
+            if not nodelta_c:
                 continue
 
             rows.append(ArgumentPair(
@@ -126,16 +153,42 @@ def build_winning_raw() -> list[ArgumentPair]:
         delta_uids = [uid for uid in direct_replies if utterances[uid]["meta"].get("success") == 1]
         nodelta_uids = [uid for uid in direct_replies if utterances[uid]["meta"].get("success") == 0]
 
+        # Each delta argument is matched to its single closest nodelta argument
+        # by (length, score) — avoids the cross-product blow-up of the old code,
+        # which paired every delta with every nodelta and biased the data.
         for d_uid in delta_uids:
+            delta_u = utterances[d_uid]
+            delta_body = delta_u["text"]
+            if not _valid_body(delta_body):
+                continue
+            delta_len = len(delta_body)
+            delta_score = float(delta_u["meta"].get("score") or 0)
+
+            best_nd = None
+            best_dist = math.inf
             for nd_uid in nodelta_uids:
-                rows.append(ArgumentPair(
-                    thread_id=root_id,
-                    topic=title,
-                    original_post=op_text,
-                    delta_argument=utterances[d_uid]["text"],
-                    nodelta_argument=utterances[nd_uid]["text"],
-                    date=date,
-                ))
+                nd_u = utterances[nd_uid]
+                nd_body = nd_u["text"]
+                if not _valid_body(nd_body):
+                    continue
+                cand_len = len(nd_body)
+                cand_score = float(nd_u["meta"].get("score") or 0)
+                dist = _match_score(delta_len, delta_score, cand_len, cand_score)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_nd = nd_u
+
+            if best_nd is None:
+                continue
+
+            rows.append(ArgumentPair(
+                thread_id=root_id,
+                topic=title,
+                original_post=op_text,
+                delta_argument=delta_body,
+                nodelta_argument=best_nd["text"],
+                date=date,
+            ))
     return rows
 
 
@@ -143,5 +196,5 @@ if __name__ == "__main__":
     pairs = build_webis_raw() + build_winning_raw()
     df = pd.DataFrame([p.model_dump() for p in pairs])
     df = df[df["delta_argument"] != df["nodelta_argument"]]
-    df.to_csv("argument_quality_dataset.csv", index=False)
+    df.to_csv("data/argument_quality_dataset.csv", index=False)
     print(f"Dataset saved: {len(df)} rows, {df['thread_id'].nunique()} unique threads")

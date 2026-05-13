@@ -9,7 +9,7 @@ Usage:
     uv run python summarize.py
 
 Outputs:
-    arguments_data/pairs_summarized.xlsx  (local backup)
+    data/pairs_summarized.xlsx  (local backup)
     Pushes updated dataset to idodah/argument-quality-cmv on Hugging Face Hub
 """
 
@@ -39,8 +39,11 @@ SYSTEM_PROMPT = (
     "as if you are the original author restating your own argument. "
     "Preserve the key claims, reasoning, persuasive intent, and the author's tone and style. "
     "Use 'I' and 'my' throughout. Do not refer to 'the author'. "
+    "The topic of the argument is provided as context only — do not summarize it. "
     "Output only the summary, nothing else."
 )
+
+USER_TEMPLATE = "Topic (context only, do not summarize): {topic}\n\nArgument:\n{text}"
 
 _REFUSAL_PREFIXES = (
     "i'm sorry",
@@ -48,9 +51,12 @@ _REFUSAL_PREFIXES = (
     "i cannot",
     "i can't",
     "as an ai",
+    "i’m sorry"
 )
 
 TERMINAL_STATUSES = {"COMPLETED", "FAILED", "EXPIRED", "CANCELLED"}
+
+
 
 def _is_valid_summary(summary: str) -> bool:
     if not summary:
@@ -61,9 +67,9 @@ def _is_valid_summary(summary: str) -> bool:
     return True
 
 
-def _build_jsonl(thread_ids: list[str], texts: list[str]) -> str:
+def _build_jsonl(thread_ids: list[str], texts: list[str], topics: list[str]) -> str:
     lines = []
-    for tid, text in zip(thread_ids, texts):
+    for tid, text, topic in zip(thread_ids, texts, topics):
         record = {
             "custom_id": tid,
             "method": "POST",
@@ -72,10 +78,11 @@ def _build_jsonl(thread_ids: list[str], texts: list[str]) -> str:
                 "model": MODEL,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": USER_TEMPLATE.format(topic=topic, text=text)},
                 ],
                 "temperature": 0.0
             },
+            "reasoning_effort": "low"
         }
         lines.append(json.dumps(record))
     return "\n".join(lines).encode("utf-8")
@@ -151,19 +158,21 @@ def _fetch_results(client: Together, output_file_id: str, ids: list[str], origin
     return results
 
 
-def batch_summarize(texts: list[str], client: Together, label: str, test: bool = False) -> list[str]:
+def batch_summarize(texts: list[str], topics: list[str], client: Together, label: str, test: bool = False) -> list[str]:
     """End-to-end: chunk into BATCH_SIZE jobs → upload → submit → poll → fetch."""
     all_summaries: list[str] = []
-    chunks = [texts[i : i + BATCH_SIZE] for i in range(0, len(texts), BATCH_SIZE)]
+    text_chunks = [texts[i : i + BATCH_SIZE] for i in range(0, len(texts), BATCH_SIZE)]
+    topic_chunks = [topics[i : i + BATCH_SIZE] for i in range(0, len(topics), BATCH_SIZE)]
     if test:
-        chunks = chunks[:1]
-    n_chunks = len(chunks)
+        text_chunks = text_chunks[:1]
+        topic_chunks = topic_chunks[:1]
+    n_chunks = len(text_chunks)
 
-    for chunk_idx, chunk in enumerate(chunks):
+    for chunk_idx, (chunk, topic_chunk) in enumerate(zip(text_chunks, topic_chunks)):
         chunk_label = f"{label}_chunk{chunk_idx}"
         print(f"  Chunk {chunk_idx + 1}/{n_chunks} ({len(chunk)} texts)...")
         ids = [f"{chunk_label}_{i}" for i in range(len(chunk))]
-        jsonl_bytes = _build_jsonl(ids, chunk)
+        jsonl_bytes = _build_jsonl(ids, chunk, topic_chunk)
         batch_id = _submit_batch(client, jsonl_bytes, chunk_label)
         output_file_id = _poll_until_done(client, batch_id, chunk_label)
         all_summaries.extend(_fetch_results(client, output_file_id, ids, chunk))
@@ -192,16 +201,19 @@ def main() -> None:
     # ------------------------------------------------------------------
     print("\nSummarizing original_post (deduplicated)...")
     originals = (
-        df[["thread_id", "original_post"]]
+        df[["thread_id", "original_post", "topic"]]
         .drop_duplicates(subset="thread_id")
         .reset_index(drop=True)
     )
-    originals["original_post_summary"] = batch_summarize(
-        originals["original_post"].tolist(), client, label="original"
+    originals["summary"] = batch_summarize(
+        originals["original_post"].tolist(),
+        originals["topic"].tolist(),
+        client,
+        label="original",
     )
 
     df = df.merge(
-        originals[["thread_id", "original_post_summary"]],
+        originals[["thread_id", "summary"]],
         on="thread_id",
         how="left",
     )
@@ -209,16 +221,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Save locally
     # ------------------------------------------------------------------
-    out_path = Path("./arguments_data/pairs_summarized.parquet")
+    out_path = Path("./data/pairs_summarized.parquet")
     df.to_parquet(out_path, index=False)
     print(f"\nSaved locally to {out_path}")
 
     # ------------------------------------------------------------------
     # 6. Push to Hugging Face Hub
     # ------------------------------------------------------------------
-    print(f"\nUploading to {HF_REPO_ID} (split='summarized')...")
+    print(f"\nUploading to {HF_REPO_ID} (split='summarization')...")
     ds = Dataset.from_pandas(df, preserve_index=False)
-    ds.push_to_hub(HF_REPO_ID, split="summarized", token=token_hf, private=False)
+    ds.push_to_hub(HF_REPO_ID, split="summarization", token=token_hf, private=False)
     print(f"Done. https://huggingface.co/datasets/{HF_REPO_ID}")
 
 
