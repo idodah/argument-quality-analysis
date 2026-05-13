@@ -3,17 +3,22 @@ Shared data loading, splitting, and pair-shuffling utilities.
 """
 
 import random
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from datasets import load_dataset
+
+RESULTS_PATH = Path(__file__).resolve().parent.parent / "results.csv"
+RESULTS_COLUMNS = ["model", "split", "n_train", "accuracy", "precision", "recall", "f1", "roc_auc", "timestamp"]
 
 RANDOM_SEED = 42
 HF_REPO_ID = "idodah/argument-quality-cmv"
 
 
 def load_data() -> pd.DataFrame:
-    ds = load_dataset(HF_REPO_ID, split="train")
+    ds = load_dataset(HF_REPO_ID, split="filtered_v2")
     df = ds.to_pandas()
     df["date"] = pd.to_datetime(df["date"])
     df = df.dropna(subset=["date", "topic", "original_post", "delta_argument", "nodelta_argument"])
@@ -44,7 +49,7 @@ def shuffle_pairs(df: pd.DataFrame, seed: int = RANDOM_SEED) -> tuple[dict[str, 
     """
     rng = random.Random(seed)
     topics, posts, summaries, arg_as, arg_bs, labels = [], [], [], [], [], []
-    has_summary = "original_post_summary" in df.columns
+    has_summary = "summary" in df.columns
     for _, row in df.iterrows():
         if rng.random() < 0.5:
             arg_a, arg_b, label = row["delta_argument"], row["nodelta_argument"], 1
@@ -52,18 +57,21 @@ def shuffle_pairs(df: pd.DataFrame, seed: int = RANDOM_SEED) -> tuple[dict[str, 
             arg_a, arg_b, label = row["nodelta_argument"], row["delta_argument"], 0
         topics.append(row["topic"])
         posts.append(row["original_post"])
-        summaries.append(row["original_post_summary"] if has_summary else None)
+        summaries.append(row["summary"] if has_summary else None)
         arg_as.append(arg_a)
         arg_bs.append(arg_b)
         labels.append(label)
     fields = {
         "topic": np.array(topics),
         "original_post": np.array(posts),
-        "original_post_summary": np.array(summaries),
+        "summary": np.array(summaries),
         "arg_a": np.array(arg_as),
         "arg_b": np.array(arg_bs),
     }
-    return fields, np.array(labels)
+    labels_arr = np.array(labels)
+    pos_rate = labels_arr.mean() if len(labels_arr) else 0.0
+    print(f"shuffle_pairs: n={len(labels_arr)}, P(label=1)={pos_rate:.3f}")
+    return fields, labels_arr
 
 
 SYSTEM_PROMPT = (
@@ -72,8 +80,25 @@ SYSTEM_PROMPT = (
     "decide which response is more persuasive and successfully changed the author's mind."
 )
 
+RANK_SYSTEM_PROMPT = (
+    "You are an expert at evaluating argument quality. "
+    "Given a topic, a post expressing a position, and a response, "
+    "judge how persuasive the response is at changing the author's mind."
+)
 
-def make_prompt(topic: str, original_post: str, arg_a: str, arg_b: str, label: int | None = None, use_summary: bool = False) -> dict:
+
+def make_rank_prompt(topic: str, post: str, argument: str) -> dict:
+    """Single-argument prompt used by the pair-wise ranking head."""
+    user = (
+        f"### Topic\n{topic}\n\n"
+        f"### Post\n{post}\n\n"
+        f"### Response\n{argument}\n\n"
+        "### Score\n"
+    )
+    return {"system": RANK_SYSTEM_PROMPT, "user": user}
+
+
+def make_prompt(topic: str, post: str, arg_a: str, arg_b: str, label: int | None = None) -> dict:
     """
     Build system/user prompt dict for the LLM.
     If label is provided, appends the answer to the user message (for training).
@@ -82,7 +107,7 @@ def make_prompt(topic: str, original_post: str, arg_a: str, arg_b: str, label: i
     """
     user = (
         f"### Topic\n{topic}\n\n"
-        f"### Post\n{original_post}\n\n"
+        f"### Post\n{post}\n\n"
         f"### Response A\n{arg_a}\n\n"
         f"### Response B\n{arg_b}\n\n"
         "Which response is more persuasive? Answer with only 'A' or 'B'.\n\n"
@@ -91,6 +116,27 @@ def make_prompt(topic: str, original_post: str, arg_a: str, arg_b: str, label: i
     if label is not None:
         user += "A" if label == 1 else "B"
     return {"system": SYSTEM_PROMPT, "user": user}
+
+
+def save_results(results: list[dict], path: Path = RESULTS_PATH) -> pd.DataFrame:
+    """
+    Persist each model's latest run to a shared CSV. Rows for any model present
+    in `results` are replaced; rows for other models are preserved.
+    """
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    new_df = pd.DataFrame([{**r, "timestamp": timestamp} for r in results])
+
+    if path.exists():
+        existing = pd.read_csv(path)
+        existing = existing[~existing["model"].isin(new_df["model"].unique())]
+        combined = pd.concat([existing, new_df], ignore_index=True)
+    else:
+        combined = new_df
+
+    combined = combined.reindex(columns=RESULTS_COLUMNS)
+    combined = combined.sort_values(["model", "split"]).reset_index(drop=True)
+    combined.to_csv(path, index=False)
+    return combined
 
 
 def evaluate(name: str, y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray | None = None) -> dict:

@@ -34,5 +34,5 @@ def run(train_fields, train_labels, val_fields, val_labels, test_fields, test_la
     for split_name, X, y in [("val", X_val, val_labels), ("test", X_test, test_labels)]:
         y_pred = clf.predict(X)
         y_prob = clf.predict_proba(X)[:, 1]
-        results.append({**evaluate("tfidf_random_forest", y, y_pred, y_prob), "split": split_name})
+        results.append({**evaluate("tfidf_random_forest", y, y_pred, y_prob), "split": split_name, "n_train": len(train_labels)})
     return results

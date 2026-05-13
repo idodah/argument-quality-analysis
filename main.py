@@ -1,7 +1,7 @@
 import pandas as pd
 
 from models import majority_baseline, tfidf_logreg, tfidf_random_forest, tfidf_xgboost
-from models.data import load_data, split_by_date, shuffle_pairs, RANDOM_SEED
+from models.data import load_data, split_by_date, shuffle_pairs, save_results, RANDOM_SEED
 
 if __name__ == "__main__":
     print(f"Loading data...")
@@ -24,7 +24,9 @@ if __name__ == "__main__":
     all_results = []
     for module in [majority_baseline, tfidf_logreg, tfidf_random_forest, tfidf_xgboost]:
         print(f"\nRunning {module.__name__.split('.')[-1]}...")
-        all_results += module.run(**kwargs)
+        module_results = module.run(**kwargs)
+        save_results(module_results)
+        all_results += module_results
 
     results_df = pd.DataFrame(all_results)[["model", "split", "accuracy", "precision", "recall", "f1", "roc_auc"]]
     print(f"\n{results_df.to_string(index=False)}")
