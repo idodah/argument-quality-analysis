@@ -1,7 +1,7 @@
 """
 Load the 'filtered' split from the HF hub, drop rows where delta_argument or
 nodelta_argument has fewer than MIN_TOKENS or more than MAX_TOKENS tokens
-(per the Llama-3.2 tokenizer), and push the result to a new split.
+(per the ranker model's tokenizer), and push the result to a new split.
 """
 
 import os
@@ -12,13 +12,13 @@ from dotenv import load_dotenv
 from transformers import AutoTokenizer
 
 from models.data import HF_REPO_ID
-from models.llama import MODEL_ID
+from models.qwen import MODEL_ID
 
 INPUT_SPLIT = "filtered"
 OUTPUT_SPLIT = "filtered_v2"
 OUTPUT_EXCEL = "data/filtered_v2.xlsx"
 MIN_TOKENS = 20
-MAX_TOKENS = 1500
+MAX_TOKENS = 2000
 MAX_ORIGINAL_POST_TOKENS = 2000
 MAX_LENGTH_RATIO = 3.0
 

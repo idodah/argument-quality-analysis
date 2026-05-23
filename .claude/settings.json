@@ -29,7 +29,35 @@
       "Bash(python -c \"from together.resources.files import FilesResource; import inspect; print\\(inspect.getsource\\(FilesResource.upload\\)\\)\")",
       "Bash(python -c \"from together.utils.files import check_file; import inspect; print\\(inspect.getsource\\(check_file\\)\\)\")",
       "Bash(python -c \"from together.utils.files import check_file\")",
-      "Bash(python -c \"from together.types import BatchCreateResponse; print\\(BatchCreateResponse.model_fields.keys\\(\\)\\)\")"
+      "Bash(python -c \"from together.types import BatchCreateResponse; print\\(BatchCreateResponse.model_fields.keys\\(\\)\\)\")",
+      "Bash(git config *)",
+      "Bash(ls -la ~/.ssh/ 2>/dev/null | grep -E \"id_\\(ed25519|rsa\\)\" || echo \"No SSH keys found\")",
+      "Read(//home/idodah/.ssh/**)",
+      "Bash(ssh -T git@github.com)",
+      "Bash(python -c \"import openai; print\\(openai.__version__\\)\")",
+      "Bash(bzcat pairs.jsonl.bz2)",
+      "Bash(bzcat threads.jsonl.bz2)",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('conversations.json'\\)\\); k=list\\(d.keys\\(\\)\\)[0]; print\\(k\\); print\\(json.dumps\\(d[k], indent=2\\)[:3000]\\)\")",
+      "Bash(python -c \"import openpyxl; print\\(openpyxl.__version__\\)\")",
+      "Read(//home/idodah/argument_quista2/**)",
+      "Bash(mkdir -p /home/idodah/argument_quality2/data)",
+      "Bash(mv /home/idodah/argument_quality2/argument_quality_dataset.csv /home/idodah/argument_quality2/argument_quality_preprocessed.xlsx /home/idodah/argument_quality2/filtered_v2.xlsx /home/idodah/argument_quality2/inconsistent_rows.xlsx /home/idodah/argument_quality2/token_counts.xlsx /home/idodah/argument_quality2/data/)",
+      "Bash(mv /home/idodah/argument_quality2/arguments_data/* /home/idodah/argument_quality2/data/)",
+      "Bash(rmdir /home/idodah/argument_quality2/arguments_data)",
+      "Bash(git mv *)",
+      "Bash(mv /home/idodah/argument_quality2/test.py /home/idodah/argument_quality2/filter_by_tokens.py)",
+      "Bash(mkdir -p /home/idodah/argument_quality2/preprocessing)",
+      "Bash(mv /home/idodah/argument_quality2/data_creation.py /home/idodah/argument_quality2/preprocess.py /home/idodah/argument_quality2/summarize.py /home/idodah/argument_quality2/summarize_inference.py /home/idodah/argument_quality2/filter_by_similarity.py /home/idodah/argument_quality2/filter_by_tokens.py /home/idodah/argument_quality2/text_utils.py /home/idodah/argument_quality2/embeddings.py /home/idodah/argument_quality2/preprocessing/)",
+      "Bash(python -c ' *)",
+      "Bash(.venv/bin/python -c \"import inspect; from transformers import Trainer; src = inspect.getsource\\(Trainer.prediction_step\\); print\\(src\\)\")",
+      "Bash(.venv/bin/python -c \"import inspect; from transformers import Trainer; print\\('can_return_loss' in dir\\(Trainer\\)\\); t_init = inspect.getsource\\(Trainer.__init__\\); import re; matches = [l for l in t_init.split\\('\\\\n'\\) if 'can_return_loss' in l]; print\\('\\\\n'.join\\(matches\\)\\)\")",
+      "Bash(.venv/bin/python -c \"from transformers.utils.generic import can_return_loss; import inspect; print\\(inspect.getsource\\(can_return_loss\\)\\)\")",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -c \"import ast; ast.parse\\(open\\('/home/idodah/argument_quality2/models/llama.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(rm /home/idodah/argument_quality2/agents/argument_refiner.py && find /home/idodah/argument_quality2/agents -type f -name \"*.py\" | sort)"
+    ],
+    "additionalDirectories": [
+      "/home/idodah/argument_quality2/agents"
     ]
   }
 }

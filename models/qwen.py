@@ -1,5 +1,5 @@
 """
-Fine-tune Llama (base) with QLoRA (4-bit NF4) for pair-wise argument-quality
+Fine-tune Qwen3-8B with QLoRA (4-bit NF4) for pair-wise argument-quality
 ranking.
 
 Each example produces two forward passes — one with the delta argument and one
@@ -12,11 +12,9 @@ higher score. This is order-invariant by construction — no A/B token, no
 two-order averaging.
 
 Usage:
-    python -m models.llama                  # uses the full original post (default)
-    python -m models.llama --use-summary    # uses the gpt-oss summary if present
+    python -m models.qwen
 """
 
-import argparse
 import os
 from pathlib import Path
 
@@ -31,6 +29,7 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -44,8 +43,8 @@ from models.data import (
     split_by_date,
 )
 
-MODEL_ID = "meta-llama/Llama-3.1-8B"
-MAX_LENGTH = 4096
+MODEL_ID = "Qwen/Qwen3-8B"
+MAX_LENGTH = 8192
 RANKING_MARGIN = 0.1
 
 LORA_CONFIG = LoraConfig(
@@ -97,24 +96,16 @@ def _trim_prompt_to_length(prompt: dict, tokenizer) -> str:
     return f"{prompt['system']}\n\n{trimmed_user}"
 
 
-def _get_post(fields: dict, i: int, use_summary: bool) -> str:
-    if use_summary:
-        s = fields["summary"][i]
-        if s is not None and str(s).strip():
-            return str(s)
-    return fields["original_post"][i]
-
-
 def _tokenize_single(text: str, tokenizer) -> dict:
     return tokenizer(text, truncation=True, max_length=MAX_LENGTH, padding=False)
 
 
-def _build_dataset(fields: dict, labels: np.ndarray, tokenizer, use_summary: bool) -> Dataset:
+def _build_dataset(fields: dict, labels: np.ndarray, tokenizer) -> Dataset:
     """Each row produces tokenized (delta_prompt, nodelta_prompt) pair."""
     records = []
     for i in range(len(labels)):
         topic = fields["topic"][i]
-        post = _get_post(fields, i, use_summary)
+        post = fields["original_post"][i]
         # labels[i] == 1 means arg_a is the delta argument.
         if labels[i] == 1:
             delta_arg, nodelta_arg = fields["arg_a"][i], fields["arg_b"][i]
@@ -187,14 +178,18 @@ class RankingModel(nn.Module):
             use_cache=False,
         )
         last_hidden = out.hidden_states[-1]  # (B, T, H)
-        # Index the last non-pad token per row.
-        seq_lens = attention_mask.sum(dim=1) - 1  # (B,)
-        idx = seq_lens.view(-1, 1, 1).expand(-1, 1, last_hidden.size(-1))
-        last_tok = last_hidden.gather(1, idx).squeeze(1)  # (B, H)
-        scores = self.score_head(last_tok.to(torch.float32)).squeeze(-1)  # (B,)
+        # Mean-pool over non-pad tokens.
+        mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)  # (B, T, 1)
+        summed = (last_hidden * mask).sum(dim=1)  # (B, H)
+        counts = mask.sum(dim=1).clamp(min=1.0)  # (B, 1)
+        pooled = summed / counts  # (B, H)
+        scores = self.score_head(pooled.to(torch.float32)).squeeze(-1)  # (B,)
         return scores
 
-    def forward(self, **batch):
+    def forward(self, return_loss: bool = True, **batch):
+        # `return_loss=True` default lets HF Trainer detect that this model
+        # computes its own loss without a `labels` input, so eval_loss is
+        # captured during evaluation.
         delta_scores = self.score(batch["delta_input_ids"], batch["delta_attention_mask"])
         nodelta_scores = self.score(batch["nodelta_input_ids"], batch["nodelta_attention_mask"])
         target = torch.ones_like(delta_scores)
@@ -207,6 +202,42 @@ class RankingTrainer(Trainer):
         outputs = model(**inputs)
         loss = outputs["loss"]
         return (loss, outputs) if return_outputs else loss
+
+    def _save(self, output_dir: str | None = None, state_dict=None) -> None:
+        # Default Trainer._save would call state_dict() on the full RankingModel,
+        # which under QLoRA includes ~8B 4-bit-quantized base params that
+        # safetensors can't round-trip. Save the same layout as save_model()
+        # (adapter/, score_head.pt, tokenizer/) so load_model() can read these
+        # intermediate checkpoints directly.
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        model = self.accelerator.unwrap_model(self.model, keep_torch_compile=False)
+        model.base.save_pretrained(os.path.join(output_dir, "adapter"))
+        torch.save(model.score_head.state_dict(), os.path.join(output_dir, "score_head.pt"))
+        tokenizer = self.processing_class
+        if tokenizer is None and self.data_collator is not None and hasattr(self.data_collator, "tokenizer"):
+            tokenizer = self.data_collator.tokenizer
+        if tokenizer is not None:
+            tokenizer.save_pretrained(os.path.join(output_dir, "tokenizer"))
+        torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
+
+
+class BestCheckpointTracker(TrainerCallback):
+    """Records the path of the checkpoint with the best (lowest) eval_loss."""
+
+    def __init__(self):
+        self.best_metric: float | None = None
+        self.best_checkpoint: str | None = None
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics is None or "eval_loss" not in metrics:
+            return
+        loss = metrics["eval_loss"]
+        if self.best_metric is None or loss < self.best_metric:
+            self.best_metric = loss
+            self.best_checkpoint = os.path.join(
+                args.output_dir, f"checkpoint-{state.global_step}"
+            )
 
 
 def _load_model():
@@ -329,13 +360,13 @@ def score_pair(model: "RankingModel", tokenizer, topic: str, post: str, arg_a: s
     }
 
 
-def _predict(model, tokenizer, fields: dict, labels: np.ndarray, use_summary: bool) -> tuple[np.ndarray, np.ndarray]:
+def _predict(model, tokenizer, fields: dict, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     device = next(model.base.parameters()).device
     preds, probs = [], []
     for i in range(len(labels)):
         topic = fields["topic"][i]
-        post = _get_post(fields, i, use_summary)
+        post = fields["original_post"][i]
         arg_a, arg_b = fields["arg_a"][i], fields["arg_b"][i]
 
         text_a = _trim_prompt_to_length(make_rank_prompt(topic, post, arg_a), tokenizer)
@@ -361,15 +392,14 @@ def run(
     val_labels,
     test_fields,
     test_labels,
-    use_summary: bool = False,
     **_,
 ) -> list[dict]:
-    model_name = "llama_qlora_rank_summary" if use_summary else "llama_qlora_rank"
+    model_name = "qwen_qlora_rank"
 
     model, tokenizer = _load_model()
 
-    train_ds = _build_dataset(train_fields, train_labels, tokenizer, use_summary=use_summary)
-    val_ds = _build_dataset(val_fields, val_labels, tokenizer, use_summary=use_summary)
+    train_ds = _build_dataset(train_fields, train_labels, tokenizer)
+    val_ds = _build_dataset(val_fields, val_labels, tokenizer)
 
     args = TrainingArguments(
         output_dir=f"./checkpoints/{model_name}",
@@ -389,28 +419,38 @@ def run(
         save_strategy="steps",
         save_steps=0.25,
         save_total_limit=3,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
         report_to="none",
         seed=RANDOM_SEED,
         remove_unused_columns=False,
         label_names=[],
     )
 
+    best_tracker = BestCheckpointTracker()
     trainer = RankingTrainer(
         model=model,
         args=args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
         data_collator=PairCollator(tokenizer),
+        callbacks=[best_tracker],
     )
     trainer.train()
 
-    save_model(model, tokenizer, Path(f"./checkpoints/{model_name}/final"))
+    final_dir = Path(f"./checkpoints/{model_name}/final")
+    save_model(model, tokenizer, final_dir)
+
+    if best_tracker.best_checkpoint is not None and os.path.isdir(best_tracker.best_checkpoint):
+        print(f"Loading best checkpoint for eval: {best_tracker.best_checkpoint} (eval_loss={best_tracker.best_metric:.4f})")
+        del model
+        del trainer
+        torch.cuda.empty_cache()
+        model, tokenizer = load_model(best_tracker.best_checkpoint)
+    else:
+        print("No best checkpoint recorded; evaluating last-step model.")
 
     results = []
     for split_name, fields, labels in [("val", val_fields, val_labels), ("test", test_fields, test_labels)]:
-        y_pred, y_prob = _predict(model, tokenizer, fields, labels, use_summary)
+        y_pred, y_prob = _predict(model, tokenizer, fields, labels)
         results.append({**evaluate(model_name, labels, y_pred, y_prob), "split": split_name, "n_train": len(train_labels)})
     return results
 
@@ -418,10 +458,6 @@ def run(
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--use-summary", action="store_true", help="Use the gpt-oss summary instead of original_post (default: original_post).")
-    args = parser.parse_args()
 
     df = load_data()
     train_df, val_df, test_df = split_by_date(df)
@@ -433,7 +469,6 @@ if __name__ == "__main__":
         train_fields, train_labels,
         val_fields, val_labels,
         test_fields, test_labels,
-        use_summary=args.use_summary,
     )
     save_results(results)
     for r in results:
