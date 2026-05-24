@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from agents.graph.chains.query_planner import plan_web_queries
-from agents.graph.state import GraphState, LOCAL_K, WEB_K, WEB_QUERIES, active_view
+from agents.graph.state import GraphState, LOCAL_K, WEB_K, active_view
 from agents.retrieval import LocalRetriever, WebRetriever
 
 _LOCAL: LocalRetriever | None = None
@@ -38,13 +37,13 @@ def retrieve_local(state: GraphState) -> GraphState:
 
 
 def retrieve_web(state: GraphState) -> GraphState:
-    # Plan several targeted queries from the critique's evidence gaps, then run
-    # each through Tavily. Querying by the critique (not the draft itself) steers
-    # search toward what is MISSING rather than what the draft already says.
-    _side, current, _prev, critique = active_view(state)
-    queries = plan_web_queries(state["original_post"], current, critique, n=WEB_QUERIES)
+    # Queries were planned by the router in the same LLM call that picked 'web'.
+    # Querying by the critique (not the draft itself) steers search toward what
+    # is MISSING rather than what the draft already says.
+    _side, current, _prev, _critique = active_view(state)
+    queries = state.get("web_queries") or []
     if not queries:
-        # Planner returned nothing usable; fall back to the old topic+draft query.
+        # Router returned nothing usable; fall back to the old topic+draft query.
         queries = [f"{state['topic']} {current[:200]}"]
 
     chunks: list[str] = []

@@ -33,11 +33,11 @@ INITIAL_GEN_USER = (
 )
 
 ROUTER_SYSTEM = (
-    "You are a retrieval router for an argument-refinement pipeline. "
-    "Given a draft pro-Israel argument and the post it responds to, decide "
-    "whether external evidence would meaningfully strengthen the argument, "
-    "and if so, which source is most appropriate.\n\n"
-    "Choices:\n"
+    "You are a retrieval router AND web-query planner for an argument-refinement "
+    "pipeline. Given a draft pro-Israel argument, the post it responds to, and the "
+    "current critique, decide whether external evidence would meaningfully "
+    "strengthen the argument, and if so, which source is most appropriate.\n\n"
+    "Choices for 'mode':\n"
     "  - 'local': consult a curated local document store (vetted articles, "
     "reports, primary sources). Prefer this for historical, legal, or "
     "well-documented factual claims.\n"
@@ -45,49 +45,42 @@ ROUTER_SYSTEM = (
     "current statistics, or news from the last 2 years.\n"
     "  - 'none':  the argument is already well-grounded or relies on values/"
     "framing rather than facts; retrieval would not help.\n\n"
-    "Reply with exactly one token: local, web, or none."
+    "If (and only if) mode='web', also produce exactly {n} web search queries "
+    "that target the evidence gaps the critique identified. Query guidelines:\n"
+    "  - Target the gaps in the critique, not the strengths of the draft.\n"
+    "  - Prefer queries about recent events, current statistics, or news from "
+    "the last 2 years (that is when web search beats a static corpus).\n"
+    "  - Each query should cover a DIFFERENT angle; do not paraphrase one idea.\n"
+    "  - Keep each query short and search-engine-friendly (no full sentences).\n\n"
+    "Return STRICT JSON with exactly two keys:\n"
+    "  {{\"mode\": \"local|web|none\", \"queries\": [\"q1\", \"q2\", ...]}}\n\n"
+    "If mode != 'web', 'queries' must be an empty list. Output ONLY the JSON "
+    "object, no preamble, no markdown fences."
 )
 
 ROUTER_USER = (
     "### Anti-Israel Post\n{post}\n\n"
     "### Current Draft\n{draft}\n\n"
     "### Previous Critique (if any)\n{critique}\n\n"
-    "Decision (local|web|none):"
-)
-
-WEB_QUERY_PLANNER_SYSTEM = (
-    "You are a web-research planner for a pro-Israel argument-refinement pipeline. "
-    "Given the anti-Israel post being rebutted, the current draft rebuttal, and a "
-    "critique of that draft, your job is to propose concise web search queries that "
-    "would surface evidence to FIX the weaknesses named in the critique.\n\n"
-    "Guidelines:\n"
-    "  - Target the gaps in the critique, not the strengths of the draft.\n"
-    "  - Prefer queries that surface recent events, current statistics, or news "
-    "from the last 2 years (that is when web search beats a static corpus).\n"
-    "  - Each query should cover a DIFFERENT angle; do not paraphrase one idea.\n"
-    "  - Keep each query short and search-engine-friendly (no full sentences).\n\n"
-    "Return exactly {n} queries, one per line, numbered 1-{n}, with no other text."
-)
-
-WEB_QUERY_PLANNER_USER = (
-    "### Anti-Israel Post\n{post}\n\n"
-    "### Current Draft\n{draft}\n\n"
-    "### Critique of the Draft\n{critique}\n\n"
-    "### {n} search queries:"
+    "### JSON verdict:"
 )
 
 GRADER_SYSTEM = (
     "You are a relevance grader for a RAG pipeline. Given a draft pro-Israel "
-    "argument and a retrieved document chunk, judge whether the chunk contains "
-    "information that could be used to support, sharpen, or correct the "
-    "argument.\n\n"
-    "Reply with exactly one token: yes or no."
+    "argument and a numbered list of retrieved document chunks, judge which "
+    "chunks contain information that could be used to support, sharpen, or "
+    "correct the argument.\n\n"
+    "Return STRICT JSON with exactly one key:\n"
+    "  {{\"keep\": [<index>, ...]}}\n\n"
+    "Where each <index> is a 1-based chunk number from the list. Include only "
+    "indices of RELEVANT chunks; omit irrelevant ones. Output ONLY the JSON "
+    "object, no preamble, no markdown fences."
 )
 
 GRADER_USER = (
     "### Draft argument\n{draft}\n\n"
-    "### Retrieved chunk\n{chunk}\n\n"
-    "Is this chunk relevant for refining the argument? (yes|no):"
+    "### Retrieved chunks (numbered)\n{chunks}\n\n"
+    "### JSON verdict:"
 )
 
 REFLECT_SYSTEM = (
