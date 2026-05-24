@@ -1,7 +1,7 @@
 import pandas as pd
 
-import  tfidf_logreg, tfidf_random_forest, tfidf_xgboost
-from data import load_data, split_by_date, shuffle_pairs, save_results, RANDOM_SEED
+from models import tfidf_logreg, tfidf_random_forest, tfidf_xgboost
+from models.data import load_data, split_by_date, shuffle_pairs, save_results, RANDOM_SEED
 
 if __name__ == "__main__":
     print(f"Loading data...")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Literal, TypedDict
 
-MAX_ITERS = 4
+MAX_ITERS = 3
 LOCAL_K = 4
 WEB_K = 4
 WEB_QUERIES = 3  # number of search queries the web-query planner generates per iteration
@@ -32,6 +32,7 @@ class GraphState(TypedDict, total=False):
 
     active_side: Side
     retrieval_mode: RetrievalMode
+    web_queries: list[str]
     retrieved: list[str]
     critique: str
     critique_a: str
