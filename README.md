@@ -121,6 +121,33 @@ Four patterns are fused into the graph:
 - **Reflexion** — the verbal critique persists across iterations; the Qwen
   ranker supplies the scalar reward that decides keep-or-revert.
 
+### Graph nodes
+
+- **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
+  `arg_b`) from the topic and original post.
+- **router** — Adaptive-RAG: picks `local`, `web`, or `none` for the active
+  side this iteration; when it picks `web`, the same call also plans the
+  search queries that target the critique's evidence gaps.
+- **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
+  CMV-Israel arguments) using the topic + post as the query.
+- **retrieve_web** — runs the router's planned queries through Tavily.
+- **skip_retrieval** — no-op when the router picks `none`.
+- **grade_docs** — Self-RAG relevance filter: in a single batched call, keeps
+  only the retrieved chunks the grader marks useful for refining the draft.
+- **reflect** — generates a critique of the current draft grounded in the
+  retrieved evidence; the critique is persisted per side (Reflexion).
+- **refine** — rewrites the active side's draft using the critique and the
+  kept evidence; the prior version is saved as `arg_{side}_prev`.
+- **hallucination_check** — Self-RAG groundedness check on the new draft. If
+  ungrounded, folds issues into the critique and loops back to `refine`;
+  after `MAX_REFINE_RETRIES` failures, reverts and marks the side converged.
+- **rank_against_prev** — pairwise Qwen ranker between the new and previous
+  draft. If the new one loses, revert and mark the side converged.
+- **switch_side** — flips `active_side` to the other (non-converged) side.
+- **final_compare** — once both sides have converged or hit `MAX_ITERS`, runs
+  one final Qwen pairwise comparison between `arg_a` and `arg_b` to pick the
+  overall winner.
+
 Run end-to-end:
 
 ```bash
