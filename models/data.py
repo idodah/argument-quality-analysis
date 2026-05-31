@@ -48,8 +48,7 @@ def shuffle_pairs(df: pd.DataFrame, seed: int = RANDOM_SEED) -> tuple[dict[str, 
       labels — (N,) array where 1 means arg_a is the delta argument
     """
     rng = random.Random(seed)
-    topics, posts, summaries, arg_as, arg_bs, labels = [], [], [], [], [], []
-    has_summary = "summary" in df.columns
+    topics, posts, arg_as, arg_bs, labels = [], [], [], [], []
     for _, row in df.iterrows():
         if rng.random() < 0.5:
             arg_a, arg_b, label = row["delta_argument"], row["nodelta_argument"], 1
@@ -57,14 +56,12 @@ def shuffle_pairs(df: pd.DataFrame, seed: int = RANDOM_SEED) -> tuple[dict[str, 
             arg_a, arg_b, label = row["nodelta_argument"], row["delta_argument"], 0
         topics.append(row["topic"])
         posts.append(row["original_post"])
-        summaries.append(row["summary"] if has_summary else None)
         arg_as.append(arg_a)
         arg_bs.append(arg_b)
         labels.append(label)
     fields = {
         "topic": np.array(topics),
         "original_post": np.array(posts),
-        "summary": np.array(summaries),
         "arg_a": np.array(arg_as),
         "arg_b": np.array(arg_bs),
     }

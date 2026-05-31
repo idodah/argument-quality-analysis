@@ -138,7 +138,7 @@ independent loops, each with its own cap:
   last targeted pro-Israel rewrite.
 
 Worst case is therefore `MAX_OUTER_ITERS x MAX_GROUND_RETRIES` grounding
-refines (3 x 3 = 9).
+refines (3 x 2 = 6).
 
 Four patterns are fused into the graph:
 
