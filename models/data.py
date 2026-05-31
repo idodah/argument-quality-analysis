@@ -85,7 +85,12 @@ RANK_SYSTEM_PROMPT = (
 
 
 def make_rank_prompt(topic: str, post: str, argument: str) -> dict:
-    """Single-argument prompt used by the pair-wise ranking head."""
+    """Single-argument prompt used by the pair-wise ranking head.
+
+    The '### Post\\n' and '\\n\\n### Response' markers below are parsed by
+    qwen._trim_prompt_to_length to locate the post for length-trimming — keep
+    them in sync if you change this format, or trimming raises ValueError.
+    """
     user = (
         f"### Topic\n{topic}\n\n"
         f"### Post\n{post}\n\n"

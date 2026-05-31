@@ -9,7 +9,7 @@ import pandas as pd
 from collections import defaultdict
 from convokit import download as convokit_download
 from zenodo_get import download as zenodo_download
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from schemas import ArgumentPair
@@ -85,7 +85,7 @@ def build_webis_raw() -> list[ArgumentPair]:
                 continue
 
             try:
-                date = datetime.utcfromtimestamp(int(created_utc)).date() if created_utc else None
+                date = datetime.fromtimestamp(int(created_utc), tz=timezone.utc).date() if created_utc else None
             except (ValueError, TypeError):
                 date = None
 
@@ -147,7 +147,7 @@ def build_winning_raw() -> list[ArgumentPair]:
         date = None
         if min_ts:
             try:
-                date = datetime.utcfromtimestamp(min_ts).date()
+                date = datetime.fromtimestamp(min_ts, tz=timezone.utc).date()
             except (ValueError, TypeError):
                 pass
 

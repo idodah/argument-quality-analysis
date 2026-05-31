@@ -44,6 +44,7 @@ def _predict_one(client: OpenAI, prompt: dict) -> tuple[int, float]:
             if attempt == MAX_RETRIES - 1:
                 raise
             time.sleep(RETRY_BACKOFF * (2 ** attempt))
+    raise RuntimeError("unreachable: retry loop exited without returning or raising")
 
 
 def _expected_choice(resp) -> tuple[int, float]:
