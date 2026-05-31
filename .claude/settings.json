@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest:*)",
+      "Bash(uv run python -m:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv add:*)",
+      "Bash(uv lock:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ruff:*)",
+      "Bash(black:*)",
+      "Read(./**)",
+      "WebFetch(domain:github.com)",
+      "WebSearch"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  }
+}
