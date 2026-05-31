@@ -1,33 +1,24 @@
-"""TF-IDF + Random Forest pair-wise baseline."""
+"""TF-IDF + Random Forest pair-wise baseline.
 
-from scipy.sparse import hstack
+Uses the shared order-invariant featurizer (`models.tfidf_features.PairTfidf`):
+context fields as-is, the two arguments as a signed tfidf difference, so an
+A<->B swap negates the argument features and the model can't learn a positional
+shortcut. See that module's docstring for the rationale.
+"""
+
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
 
 from models.data import evaluate, RANDOM_SEED
+from models.tfidf_features import PairTfidf
 
-_FIELDS = ["topic", "original_post", "arg_a", "arg_b"]
 _MAX_FEATURES = 10_000
 
 
-def _fit_vectorizers(train_fields: dict) -> list[TfidfVectorizer]:
-    vectorizers = []
-    for field in _FIELDS:
-        vec = TfidfVectorizer(max_features=_MAX_FEATURES, sublinear_tf=True, ngram_range=(1, 2))
-        vec.fit(train_fields[field])
-        vectorizers.append(vec)
-    return vectorizers
-
-
-def _transform(fields: dict, vectorizers: list[TfidfVectorizer]):
-    return hstack([vec.transform(fields[f]) for vec, f in zip(vectorizers, _FIELDS)])
-
-
 def run(train_fields, train_labels, val_fields, val_labels, test_fields, test_labels, **_) -> list[dict]:
-    vectorizers = _fit_vectorizers(train_fields)
-    X_train = _transform(train_fields, vectorizers)
-    X_val = _transform(val_fields, vectorizers)
-    X_test = _transform(test_fields, vectorizers)
+    featurizer = PairTfidf(max_features=_MAX_FEATURES).fit(train_fields)
+    X_train = featurizer.transform(train_fields)
+    X_val = featurizer.transform(val_fields)
+    X_test = featurizer.transform(test_fields)
 
     clf = RandomForestClassifier(n_estimators=300, random_state=RANDOM_SEED, n_jobs=-1)
     clf.fit(X_train, train_labels)
