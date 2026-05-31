@@ -40,7 +40,14 @@ checkpoints/
 .vscode/
 .idea/
 .DS_Store
-.claude/
+
+# Claude Code: commit the shared project config (settings.json, commands/) but
+# keep machine-local overrides and transient state out of the repo.
+.claude/settings.local.json
+.claude/*.local.json
+.claude/projects/
+.claude/todos/
+.claude/shell-snapshots/
 
 # CLI entrypoint (local-only)
 run.py
