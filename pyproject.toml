@@ -16,14 +16,26 @@ dependencies = [
     "langchain-chroma>=0.2.0",
     "langchain-openai>=1.2.1",
     "langgraph>=1.2.0",
+    "langsmith>=0.1.0",
+    "mcp>=1.2.0",
+    "gradio>=6.0.0",
+    "wandb>=0.17.0",
     "chromadb>=0.5.0",
     "tavily-python>=0.5.0",
     "openai>=2.36.0",
     "openpyxl>=3.1.5",
     "pandas>=3.0.2",
     "peft>=0.19.1",
+    "praw>=7.7.0",
+    "requests>=2.31.0",
     "tiktoken>=0.12.0",
     "together>=2.12.0",
     "xgboost>=3.2.0",
     "zenodo-get>=3.0.0",
+    "weave>=0.52.41",
+]
+
+[dependency-groups]
+dev = [
+    "pypdf>=6.12.2",
 ]

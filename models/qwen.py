@@ -1,15 +1,10 @@
-"""
-Fine-tune Qwen3-8B with QLoRA (4-bit NF4) for pair-wise argument-quality
-ranking.
+"""Fine-tune Qwen3-8B with QLoRA (4-bit NF4) for pair-wise argument ranking.
 
-Each example produces two forward passes — one with the delta argument and one
-with the nodelta argument. Each pass produces a scalar score from a small head
-on top of the last non-pad hidden state. Training minimizes a margin ranking
-loss that pushes score(delta) above score(nodelta).
-
-At inference we score both candidate arguments and predict the one with the
-higher score. This is order-invariant by construction — no A/B token, no
-two-order averaging.
+Each example produces two forward passes (delta arg / nodelta arg); each yields
+a scalar score from a small head on the mean-pooled last hidden state. Training
+minimizes a margin ranking loss pushing score(delta) above score(nodelta). At
+inference we score both candidates and pick the higher — order-invariant by
+construction (no A/B token, no two-order averaging).
 
 Usage:
     python -m models.qwen
@@ -244,8 +239,6 @@ def _load_model():
     hf_token = os.environ.get("HF_TOKEN")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=hf_token)
     tokenizer.pad_token = tokenizer.eos_token
-    # Left-pad so the "last non-pad token" indexing is unambiguous for short rows.
-    # Actually we use right-padding + attention_mask.sum()-1, which handles either side.
 
     base = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
@@ -273,25 +266,6 @@ def save_model(model: "RankingModel", tokenizer, path: str | Path) -> None:
     torch.save(model.score_head.state_dict(), path / "score_head.pt")
     tokenizer.save_pretrained(path / "tokenizer")
     print(f"Saved fine-tuned model to {path}")
-
-
-def push_to_hub(local_path: str | Path, repo_id: str, private: bool = True) -> None:
-    """Upload a saved model directory (adapter + score head + tokenizer) to the HF Hub."""
-    from huggingface_hub import HfApi
-
-    local_path = Path(local_path)
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise EnvironmentError("HF_TOKEN not set. Add it to your .env file.")
-
-    api = HfApi(token=token)
-    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
-    api.upload_folder(
-        folder_path=str(local_path),
-        repo_id=repo_id,
-        repo_type="model",
-    )
-    print(f"Pushed to https://huggingface.co/{repo_id}")
 
 
 def load_model(path: str | Path) -> tuple["RankingModel", "AutoTokenizer"]:
@@ -337,52 +311,57 @@ def load_model(path: str | Path) -> tuple["RankingModel", "AutoTokenizer"]:
     return model, tokenizer
 
 
+def _score_one(model: "RankingModel", tokenizer, topic: str, post: str, arg: str) -> float:
+    """Scalar score for one (topic, post, arg) under the ranker."""
+    device = next(model.base.parameters()).device
+    text = _trim_prompt_to_length(make_rank_prompt(topic, post, arg), tokenizer)
+    enc = tokenizer(text, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
+    with torch.no_grad():
+        return model.score(enc["input_ids"], enc["attention_mask"]).item()
+
+
 def score_pair(model: "RankingModel", tokenizer, topic: str, post: str, arg_a: str, arg_b: str) -> dict:
     """Score two candidate arguments. Returns scores, winner, and P(arg_a is more persuasive)."""
     model.eval()
-    device = next(model.base.parameters()).device
-
-    text_a = _trim_prompt_to_length(make_rank_prompt(topic, post, arg_a), tokenizer)
-    text_b = _trim_prompt_to_length(make_rank_prompt(topic, post, arg_b), tokenizer)
-    enc_a = tokenizer(text_a, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
-    enc_b = tokenizer(text_b, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
-
-    with torch.no_grad():
-        s_a = model.score(enc_a["input_ids"], enc_a["attention_mask"]).item()
-        s_b = model.score(enc_b["input_ids"], enc_b["attention_mask"]).item()
-
-    p_a = float(torch.sigmoid(torch.tensor(s_a - s_b)))
+    s_a = _score_one(model, tokenizer, topic, post, arg_a)
+    s_b = _score_one(model, tokenizer, topic, post, arg_b)
     return {
         "score_a": s_a,
         "score_b": s_b,
         "winner": "A" if s_a > s_b else "B",
-        "prob_a_better": p_a,
+        "prob_a_better": float(torch.sigmoid(torch.tensor(s_a - s_b))),
     }
 
 
 def _predict(model, tokenizer, fields: dict, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
-    device = next(model.base.parameters()).device
     preds, probs = [], []
     for i in range(len(labels)):
-        topic = fields["topic"][i]
-        post = fields["original_post"][i]
-        arg_a, arg_b = fields["arg_a"][i], fields["arg_b"][i]
-
-        text_a = _trim_prompt_to_length(make_rank_prompt(topic, post, arg_a), tokenizer)
-        text_b = _trim_prompt_to_length(make_rank_prompt(topic, post, arg_b), tokenizer)
-        enc_a = tokenizer(text_a, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
-        enc_b = tokenizer(text_b, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
-
-        with torch.no_grad():
-            s_a = model.score(enc_a["input_ids"], enc_a["attention_mask"]).item()
-            s_b = model.score(enc_b["input_ids"], enc_b["attention_mask"]).item()
-
+        s_a = _score_one(model, tokenizer, fields["topic"][i], fields["original_post"][i], fields["arg_a"][i])
+        s_b = _score_one(model, tokenizer, fields["topic"][i], fields["original_post"][i], fields["arg_b"][i])
         # P(arg_a is delta) via sigmoid of score difference.
-        p_a = float(torch.sigmoid(torch.tensor(s_a - s_b)))
-        probs.append(p_a)
+        probs.append(float(torch.sigmoid(torch.tensor(s_a - s_b))))
         preds.append(1 if s_a > s_b else 0)
     return np.array(preds), np.array(probs)
+
+
+def _setup_wandb(model_name: str) -> str:
+    """Init a Weights & Biases run if WANDB_API_KEY is set; return report_to.
+
+    Returns "wandb" (and inits the run) when configured, else "none" so the HF
+    Trainer logs nowhere extra. Project name comes from WANDB_PROJECT or a
+    sensible default. Safe when wandb isn't installed."""
+    if not os.environ.get("WANDB_API_KEY"):
+        return "none"
+    try:
+        import wandb
+    except ImportError:
+        print("[wandb] WANDB_API_KEY set but wandb not installed; skipping (run `uv add wandb`).")
+        return "none"
+    project = os.environ.get("WANDB_PROJECT", "qwen-qlora-ranker")
+    wandb.init(project=project, name=model_name, config={"model": model_name})
+    print(f"[wandb] logging enabled (project={project!r}, run={model_name!r})")
+    return "wandb"
 
 
 def run(
@@ -400,6 +379,10 @@ def run(
 
     train_ds = _build_dataset(train_fields, train_labels, tokenizer)
     val_ds = _build_dataset(val_fields, val_labels, tokenizer)
+
+    # Opt-in Weights & Biases logging: active only when WANDB_API_KEY is set,
+    # so training works unchanged for anyone without a W&B account.
+    report_to = _setup_wandb(model_name)
 
     args = TrainingArguments(
         output_dir=f"./checkpoints/{model_name}",
@@ -419,7 +402,8 @@ def run(
         save_strategy="steps",
         save_steps=0.25,
         save_total_limit=3,
-        report_to="none",
+        report_to=report_to,
+        run_name=model_name,
         seed=RANDOM_SEED,
         remove_unused_columns=False,
         label_names=[],

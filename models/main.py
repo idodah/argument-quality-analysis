@@ -1,3 +1,9 @@
+"""Run the TF-IDF baselines (LogReg / RandomForest / XGBoost) over the pair-wise
+dataset and append their metrics to results.csv.
+
+    uv run python -m models.main
+"""
+
 import pandas as pd
 
 from models import tfidf_logreg, tfidf_random_forest, tfidf_xgboost

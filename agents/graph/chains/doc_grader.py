@@ -1,4 +1,9 @@
-"""Self-RAG relevance grader: batched keep-list over all chunks in one call."""
+"""Self-RAG relevance grader: a binary yes/no verdict over the retrieved docs.
+
+Returns True if the documents are relevant to refining the draft, False
+otherwise. Parser is forgiving and defaults to True (keep / no web search) on
+parse failure so a broken grader never derails the pipeline.
+"""
 
 from __future__ import annotations
 
@@ -6,41 +11,28 @@ import json
 import re
 
 from agents import prompts
-from agents.graph.llm import chat, deterministic_llm
+from agents.llm import chat, deterministic_llm
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
-def _parse_keep(text: str, n_chunks: int) -> list[int]:
-    """Parse the grader's JSON; on failure, keep everything (conservative)."""
+def _parse_relevant(text: str) -> bool:
     match = _JSON_OBJ_RE.search(text)
     if not match:
-        return list(range(n_chunks))
+        return True
     try:
         obj = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return list(range(n_chunks))
-    raw = obj.get("keep")
-    if not isinstance(raw, list):
-        return list(range(n_chunks))
-    out: list[int] = []
-    for x in raw:
-        try:
-            i = int(x) - 1
-        except (TypeError, ValueError):
-            continue
-        if 0 <= i < n_chunks and i not in out:
-            out.append(i)
-    return out
+        return True
+    return str(obj.get("relevant", "yes")).lower().strip().startswith("y")
 
 
-def grade_chunks(draft: str, chunks: list[str]) -> list[str]:
-    """Filter chunks down to those the grader marks relevant for refining `draft`."""
+def grade_docs_relevant(draft: str, chunks: list[str]) -> bool:
+    """True if the retrieved documents are relevant for refining `draft`."""
     if not chunks:
-        return []
+        return False
     numbered = "\n\n".join(f"[{i + 1}]\n{c[:4000]}" for i, c in enumerate(chunks))
     llm = deterministic_llm()
     user = prompts.GRADER_USER.format(draft=draft[:4000], chunks=numbered)
     text = chat(llm, prompts.GRADER_SYSTEM, user)
-    keep_idx = _parse_keep(text, len(chunks))
-    return [chunks[i] for i in keep_idx]
+    return _parse_relevant(text)

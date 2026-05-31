@@ -12,7 +12,7 @@ import json
 import re
 
 from agents import prompts
-from agents.graph.llm import chat, deterministic_llm
+from agents.llm import chat, deterministic_llm
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -30,6 +30,12 @@ def _parse_verdict(text: str) -> dict:
     if not isinstance(issues, list):
         issues = [str(issues)]
     issues = [str(x).strip() for x in issues if str(x).strip()]
+    # Reconcile flag with issue list: an empty issues list means grounded,
+    # regardless of the flag the model emitted. This guards the case where the
+    # grader strips its 'no issue here' deliberation entries but forgets to
+    # flip grounded back to true.
+    if not issues:
+        grounded = True
     return {"grounded": grounded, "issues": issues}
 
 

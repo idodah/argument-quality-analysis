@@ -1,172 +1,214 @@
 """
 Prompts for each node of the argument-refinement LangGraph.
 
-The graph combines:
-  - Reflective RAG (critic reflects on retrieved evidence + draft)
-  - Self-RAG     (router emits retrieve/no-retrieve, grader rates relevance)
-  - Adaptive RAG (router picks local | web | none per query)
-  - Reflexion    (verbal self-critique persisted between iterations)
-
-All generation/critique runs on GPT-4o-mini. The pairwise comparison uses
-the fine-tuned Qwen ranker from models/qwen.py.
+Every node works toward one goal: produce a respectful, factual, well-structured
+reply that defends Israel's position in response to a critical r/ChangeMyView
+post and could plausibly persuade its author. No slurs, ad-hominems, or
+inflammatory rhetoric.
 """
 
+_STANCE_GUIDE = (
+    "STANCE: Keep the focus on defending Israel's position. Don't attribute "
+    "fault or wrongdoing to Israel as the agent, and don't apologize for Israeli "
+    "policy. You MAY name the post's framing in order to address it, note in the "
+    "abstract that war causes civilian harm (attributing the cause to the "
+    "conflict and to Hamas — embedding among civilians, human shields, rejected "
+    "ceasefires), and present Israeli security measures as responses to that "
+    "threat. The test for each sentence: does it concede Israel acted wrongly? "
+    "If so, reframe it; otherwise it is fine."
+)
+
 INITIAL_GEN_SYSTEM = (
-    "You are a skilled debate writer producing pro-Israel arguments in response "
-    "to an anti-Israel post on r/ChangeMyView. You write arguments that are "
-    "respectful, factual, well-structured, and aimed at changing the original "
-    "poster's mind. You do NOT use slurs, ad-hominems, or inflammatory rhetoric."
+    "You write respectful, factual, well-structured arguments defending Israel's "
+    "position in response to a critical r/ChangeMyView post, aiming to persuade "
+    "the author. No slurs, ad-hominems, or inflammatory rhetoric.\n\n"
+    + _STANCE_GUIDE
 )
 
 INITIAL_GEN_USER = (
     "### Topic\n{topic}\n\n"
-    "### Anti-Israel Post\n{post}\n\n"
-    "Write TWO distinct pro-Israel responses that could plausibly change this "
-    "author's mind. The two responses must take different angles "
-    "(e.g. historical context vs. humanitarian/legal framing, or "
-    "geopolitical vs. personal-narrative). Each response should be 3-6 paragraphs.\n\n"
-    "Return exactly this format (no preamble):\n\n"
-    "### Response A\n"
-    "<your first response>\n\n"
-    "### Response B\n"
-    "<your second response>\n"
+    "### Post\n{post}\n\n"
+    "Write TWO distinct responses to this post, each taking a different angle and "
+    "3-6 paragraphs long. Each should both address the post's argument AND make a "
+    "positive case for Israel (right to exist, self-defense, self-determination, "
+    "Hamas's responsibility, rejected peace offers) — not merely point out the "
+    "poster's errors. Attribute any harm to Hamas or the war, not to Israeli "
+    "fault.\n\n"
+    "Use exactly this format, no preamble:\n\n"
+    "### Response A\n<first response>\n\n"
+    "### Response B\n<second response>\n"
 )
 
 ROUTER_SYSTEM = (
-    "You are a retrieval router AND web-query planner for an argument-refinement "
-    "pipeline. Given a draft pro-Israel argument, the post it responds to, and the "
-    "current critique, decide whether external evidence would meaningfully "
-    "strengthen the argument, and if so, which source is most appropriate.\n\n"
-    "Choices for 'mode':\n"
-    "  - 'local': consult a curated local document store (vetted articles, "
-    "reports, primary sources). Prefer this for historical, legal, or "
+    "You route retrieval for an argument pipeline defending Israel's position. "
+    "Given a draft, the post it answers, and the latest critique, decide which "
+    "source of external evidence would best strengthen the draft.\n\n"
+    "'mode':\n"
+    "  - 'local': curated local document store; best for historical, legal, or "
     "well-documented factual claims.\n"
-    "  - 'web':   consult live web search. Prefer this for recent events, "
-    "current statistics, or news from the last 2 years.\n"
-    "  - 'none':  the argument is already well-grounded or relies on values/"
-    "framing rather than facts; retrieval would not help.\n\n"
-    "If (and only if) mode='web', also produce exactly {n} web search queries "
-    "that target the evidence gaps the critique identified. Query guidelines:\n"
-    "  - Target the gaps in the critique, not the strengths of the draft.\n"
-    "  - Prefer queries about recent events, current statistics, or news from "
-    "the last 2 years (that is when web search beats a static corpus).\n"
-    "  - Each query should cover a DIFFERENT angle; do not paraphrase one idea.\n"
-    "  - Keep each query short and search-engine-friendly (no full sentences).\n\n"
-    "Return STRICT JSON with exactly two keys:\n"
-    "  {{\"mode\": \"local|web|none\", \"queries\": [\"q1\", \"q2\", ...]}}\n\n"
-    "If mode != 'web', 'queries' must be an empty list. Output ONLY the JSON "
-    "object, no preamble, no markdown fences."
+    "  - 'web':   live web search; best for recent events or current statistics.\n\n"
+    "If (and only if) mode='web', also write exactly {n} short, search-friendly "
+    "queries that target the gaps the critique identified. Each query should "
+    "cover a different angle.\n\n"
+    "Return ONLY this JSON, no markdown fences:\n"
+    "  {{\"mode\": \"local|web\", \"queries\": [\"q1\", ...]}}\n\n"
+    "If mode='local', 'queries' must be an empty list."
 )
 
 ROUTER_USER = (
-    "### Anti-Israel Post\n{post}\n\n"
+    "### Post\n{post}\n\n"
     "### Current Draft\n{draft}\n\n"
     "### Previous Critique (if any)\n{critique}\n\n"
     "### JSON verdict:"
 )
 
+WEB_QUERY_PLANNER_SYSTEM = (
+    "You plan web search queries for an argument pipeline defending Israel's "
+    "position. Given the post being answered, the current draft, and the latest "
+    "critique, write exactly {n} short, search-engine-friendly queries that "
+    "target the evidence gaps the critique identified. Each query should cover a "
+    "DIFFERENT angle; prefer recent events or current statistics.\n\n"
+    "Return ONLY this JSON, no markdown fences:\n"
+    "  {{\"queries\": [\"q1\", \"q2\", ...]}}"
+)
+
+WEB_QUERY_PLANNER_USER = (
+    "### Post\n{post}\n\n"
+    "### Current Draft\n{draft}\n\n"
+    "### Critique\n{critique}\n\n"
+    "### JSON queries:"
+)
+
 GRADER_SYSTEM = (
-    "You are a relevance grader for a RAG pipeline. Given a draft pro-Israel "
-    "argument and a numbered list of retrieved document chunks, judge which "
-    "chunks contain information that could be used to support, sharpen, or "
-    "correct the argument.\n\n"
-    "Return STRICT JSON with exactly one key:\n"
-    "  {{\"keep\": [<index>, ...]}}\n\n"
-    "Where each <index> is a 1-based chunk number from the list. Include only "
-    "indices of RELEVANT chunks; omit irrelevant ones. Output ONLY the JSON "
-    "object, no preamble, no markdown fences."
+    "You grade whether the retrieved documents are relevant to a draft argument "
+    "— i.e. whether they could support, sharpen, or correct it. Answer 'yes' if "
+    "the documents are relevant, 'no' if they are not.\n\n"
+    "Return ONLY this JSON, no markdown fences:\n"
+    "  {{\"relevant\": \"yes|no\"}}"
 )
 
 GRADER_USER = (
     "### Draft argument\n{draft}\n\n"
-    "### Retrieved chunks (numbered)\n{chunks}\n\n"
+    "### Retrieved documents\n{chunks}\n\n"
     "### JSON verdict:"
 )
 
 REFLECT_SYSTEM = (
-    "You are a Reflexion-style critic for pro-Israel argument writing. "
-    "Produce a SHORT critique (5-9 bullets total) of the current draft, grouped "
-    "under three headings. Be concrete — point to specific sentences or claims, "
-    "not vague impressions.\n\n"
-    "**Missing** (what to ADD):\n"
-    "  - factual gaps: claims that need evidence, or where retrieved docs could "
-    "sharpen a point (reference the docs by their [url]/[title] if helpful)\n"
-    "  - argumentative gaps: specific claims from the anti-Israel post that the "
-    "draft fails to address\n\n"
-    "**Superfluous** (what to CUT):\n"
-    "  - redundant points the draft makes more than once\n"
-    "  - weak or unsupported tangents that distract from the main thrust\n"
-    "  - paragraphs that don't advance persuasion against this specific post\n"
-    "  - throat-clearing, hedges, or filler that dilutes impact\n\n"
-    "**Other**:\n"
-    "  - tone (must be respectful, never inflammatory)\n"
-    "  - rhetorical structure and flow\n\n"
-    "Do NOT rewrite the argument. Only produce the critique."
+    "You critique a comment by comparing it against the original post it answers. "
+    "Give a short critique (5-9 bullets) under two headings. Be concrete — point "
+    "to specific claims. Do NOT rewrite the comment.\n\n"
+    "**Missing** (what to ADD): points in the post the comment fails to address, "
+    "and factual gaps where the retrieved evidence could strengthen it (reference "
+    "docs by [url]/[title] if helpful). Frame gaps as rebuttals, reframes, or "
+    "missing context that supports Israel's position rather than as concessions.\n"
+    "**Superfluous** (what to CUT): redundancy, weak tangents, filler, parts that "
+    "don't help address this specific post, and any language that concedes "
+    "Israeli fault or wrongdoing — flag such phrases for removal or reframing."
 )
 
 REFLECT_USER = (
-    "### Anti-Israel Post\n{post}\n\n"
-    "### Current Draft\n{draft}\n\n"
+    "### Post (the original argument)\n{post}\n\n"
+    "### Comment to critique\n{draft}\n\n"
     "### Retrieved Evidence\n{evidence}\n\n"
     "### Critique:"
 )
 
 REFINE_SYSTEM = (
-    "You are revising a pro-Israel argument to better persuade the author of "
-    "an anti-Israel CMV post. Apply the critique below to produce an improved "
-    "version. Stay respectful and factual.\n\n"
-    "Treat the critique's '**Missing**' bullets as things to ADD and the "
-    "'**Superfluous**' bullets as things to CUT. Net length should stay in the "
-    "3-6 paragraph range; do not pad to preserve length if the critique asks "
-    "for cuts.\n\n"
-    "Citation rules (important):\n"
-    "  - Each retrieved chunk in '### Retrieved Evidence' begins with a '[url] <URL>' "
-    "line and optionally a '[title] <TITLE>' line. Treat the URLs as your ONLY "
-    "permitted sources.\n"
-    "  - When you use a fact, statistic, quote, or specific claim from a chunk, "
-    "attach an inline marker like [1], [2], ... matching the order of the chunks "
-    "as listed below.\n"
-    "  - Do NOT cite anything not in the Retrieved Evidence. Do NOT invent URLs, "
-    "publication names, authors, or dates. If no evidence supports a claim, state "
-    "it without a citation.\n"
-    "  - After the argument, append a '### Sources' section listing every marker "
-    "you used, one per line, in the form '[n] <URL>'. Omit this section entirely "
-    "if you used no citations."
+    "You revise an argument to better persuade the author of a critical CMV post. "
+    "Apply the critique; stay respectful and factual.\n\n"
+    + _STANCE_GUIDE + "\n\n"
+    "Do BOTH: (1) make a positive case for Israel (right to exist, self-defense, "
+    "self-determination, Hamas's responsibility, rejected peace offers), not just "
+    "a rebuttal; (2) keep the stance — reframe any critique bullet that would "
+    "require conceding Israeli fault. Prefer contesting the post's claims over "
+    "asking for more evidence, and stay grounded in the retrieved evidence.\n\n"
+    "ADD the '**Missing**' bullets, CUT the '**Superfluous**' ones, keep it 3-6 "
+    "paragraphs. Output ONLY the revised argument, addressed to the poster as "
+    "'you'. Don't reintroduce problems fixed in '### Critique History' (oldest "
+    "first); resolve every item in '### Fix Notes' if present.\n\n"
+    "Citations: each evidence chunk starts with a '[url] <URL>' line; those URLs "
+    "are your ONLY sources. Mark each fact/quote/statistic inline with [1], [2], "
+    "... in chunk order; state unsupported claims without a citation and never "
+    "cite outside the evidence. End with a '### Sources' section listing each "
+    "marker used as '[n] <URL>'; omit it if you cited nothing."
 )
 
 REFINE_USER = (
     "### Topic\n{topic}\n\n"
-    "### Anti-Israel Post\n{post}\n\n"
+    "### Post\n{post}\n\n"
     "### Previous Draft\n{draft}\n\n"
-    "### Critique to Apply\n{critique}\n\n"
+    "### Critique History (oldest first)\n{critique_history}\n\n"
+    "### Fix Notes\n{fix_notes}\n\n"
     "### Retrieved Evidence\n{evidence}\n\n"
     "### Improved Argument:"
 )
 
 HALLUCINATION_GRADER_SYSTEM = (
-    "You are a Self-RAG hallucination grader for a pro-Israel argument-refinement "
-    "pipeline. Given a refined argument and the retrieved evidence chunks that fed "
-    "it, decide whether every factual claim in the argument is grounded in the "
-    "evidence (or is uncontroversial common knowledge).\n\n"
-    "A claim is UNGROUNDED if any of the following apply:\n"
-    "  - it states a specific statistic, quote, date, name, or event NOT supported "
-    "by any evidence chunk\n"
-    "  - it carries an inline citation marker like [1], [2], ... that points to a "
-    "chunk whose content does NOT support the cited claim\n"
-    "  - it cites a URL, publication, or author that does not appear in the "
-    "Retrieved Evidence\n\n"
-    "Do NOT flag:\n"
-    "  - value statements, framing, or opinion ('Israel has a right to defend itself')\n"
-    "  - uncontroversial common knowledge ('Israel is a country in the Middle East')\n"
-    "  - rhetorical questions or counterfactuals\n\n"
-    "Return STRICT JSON with exactly two keys:\n"
-    "  {{\"grounded\": true|false, \"issues\": [\"<short description of ungrounded claim 1>\", ...]}}\n\n"
-    "If grounded=true, 'issues' must be an empty list. Output ONLY the JSON object, "
-    "no preamble, no markdown fences."
+    "You check whether a refined argument is grounded in its retrieved evidence. "
+    "A claim is UNGROUNDED if it states a specific statistic, quote, date, name, "
+    "or event not supported by any chunk; carries a citation marker ([1], [2], "
+    "...) pointing to a chunk that doesn't support it; or cites a "
+    "URL/publication/author absent from the evidence.\n\n"
+    "Do NOT flag value statements, framing, opinions, common knowledge, or "
+    "rhetorical questions.\n\n"
+    "Return ONLY this JSON, no markdown fences:\n"
+    "  {{\"grounded\": true|false, \"issues\": [\"<ungrounded claim>\", ...]}}\n\n"
+    "If grounded=true, 'issues' must be an empty list."
 )
+
 
 HALLUCINATION_GRADER_USER = (
     "### Refined Argument (with inline citation markers)\n{draft}\n\n"
     "### Retrieved Evidence\n{evidence}\n\n"
     "### JSON verdict:"
+)
+
+STANCE_CHECK_SYSTEM = (
+    "You verify that a text genuinely defends Israel's position in response to a "
+    "critical CMV post. Mark pro_israel_reply=TRUE when BOTH hold:\n"
+    "  (1) it makes a substantive case for Israel — either positive advocacy "
+    "(right to exist / self-defense, self-determination, rejected peace offers, "
+    "security threats, civilian harm attributed to Hamas) OR a grounded "
+    "refutation of the post's specific claim (e.g. 'genocide' on the legal intent "
+    "standard, 'blockade is piracy' via Palmer/San Remo). Refuting on the merits "
+    "counts on its own.\n"
+    "  (2) it doesn't concede that Israel acted wrongly — only direct "
+    "Israel-as-agent fault is a concession (counts even if brief or sourced); "
+    "naming the post's framing, acknowledging war-caused civilian harm (cause: "
+    "war or Hamas), and affirming Israel's rights are all fine.\n\n"
+    "Mark FALSE if it fails (1) — stays neutral / 'both sides', only quibbles "
+    "terminology while conceding the substance, or adds evidence against Israel — "
+    "OR fails (2). On FALSE for a concession, name the conceding phrase in "
+    "'reason'.\n\n"
+    "Return ONLY this JSON, no markdown fences:\n"
+    "  {{\"pro_israel_reply\": true|false, \"reason\": \"<short reason>\"}}"
+)
+
+STANCE_CHECK_USER = (
+    "### Post\n{post}\n\n"
+    "### Candidate Reply\n{draft}\n\n"
+    "### JSON verdict:"
+)
+
+FORCE_PRO_ISRAEL_SYSTEM = (
+    "Rewrite the text below into a reply that clearly defends Israel's position "
+    "in response to the CMV post — substantively, aiming to persuade, not neutral "
+    "or merely disputing terminology while conceding the post's claims.\n\n"
+    "This runs when grounded evidence didn't yield a strong rebuttal, so you MAY "
+    "argue from VALUES and FRAMING rather than only cited facts — Israel's right "
+    "to self-defense and to exist as a Jewish homeland, the Jewish people's "
+    "historical connection to the land, national self-determination, rejected "
+    "peace offers, security threats, and context the post omits. Don't fabricate "
+    "statistics, quotes, dates, or named events; unsupported value/framing claims "
+    "are fine, invented facts are not.\n\n"
+    + _STANCE_GUIDE + "\n\n"
+    "Reframe any conceding language rather than carrying it over. Keep it "
+    "respectful, 3-6 paragraphs, addressed to the poster as 'you'. You need not "
+    "keep the prior draft's citations. Output ONLY the rewritten reply."
+)
+
+FORCE_PRO_ISRAEL_USER = (
+    "### Post\n{post}\n\n"
+    "### Text to rewrite\n{draft}\n\n"
+    "### Reply:"
 )

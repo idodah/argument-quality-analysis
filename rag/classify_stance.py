@@ -4,7 +4,7 @@ Classify each argument in the CMV-Israel RAG corpus as pro-Israel / anti-Israel
 pro-Israel arguments for the RAG corpus.
 
 Inputs:
-    data/cmv_israel_rag.parquet  (from preprocessing.scrape_cmv_israel)
+    data/cmv_israel_rag.parquet  (from rag.scrape_cmv_israel)
 
 Outputs:
     data/cmv_israel_rag_classified.parquet   all rows + stance fields
@@ -17,8 +17,8 @@ Each row gets:
     rationale    one-sentence explanation from the classifier
 
 Usage:
-    python -m preprocessing.classify_stance
-    python -m preprocessing.classify_stance --no-hub
+    python -m rag.classify_stance
+    python -m rag.classify_stance --no-hub
 """
 
 import argparse
@@ -137,7 +137,7 @@ def push_to_hub(df: pd.DataFrame) -> None:
 def main(push: bool = True) -> None:
     load_dotenv()
     if not INPUT_PARQUET.exists():
-        raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run preprocessing.scrape_cmv_israel first.")
+        raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.scrape_cmv_israel first.")
     df = pd.read_parquet(INPUT_PARQUET)
     print(f"Loaded {len(df)} delta arguments from {INPUT_PARQUET}.")
 

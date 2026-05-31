@@ -1,0 +1,60 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Datasets (external)
+Webis-CMV-20/
+winning-args-corpus/
+data/
+full_raw_data/
+
+# Model checkpoints
+checkpoints/
+
+# Data files
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.tsv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Vector DB
+.chroma/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+.claude/
+
+# CLI entrypoint (local-only)
+run.py
+
+# Generated graph images kept under docs/ (the published graph lives at repo root: graph.png)
+docs/*.png
+
+# Reddit harvester (PRAW-based; Reddit API access not available for this account).
+# The shared generation entrypoint it used lives in agents/generate.py, so the
+# web app and CLI do not depend on this folder.
+harvester/
+
+# Excluded scripts / dirs
+# summarize_gpt_4o_mini.py
+# summarize_inference.py
+# summarize_inference.ipynb
+# slurm/

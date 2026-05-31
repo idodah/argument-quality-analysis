@@ -1,5 +1,8 @@
+"""Pydantic record types shared across the preprocessing and RAG pipelines."""
+
 from datetime import date
 from pydantic import BaseModel
+
 
 class ArgumentPair(BaseModel):
     thread_id: str

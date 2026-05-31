@@ -7,7 +7,7 @@ import os
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from agents.graph.state import GPT_MODEL
+GPT_MODEL = "gpt-5.4-nano"
 
 
 def creative_llm() -> ChatOpenAI:

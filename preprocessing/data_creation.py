@@ -1,3 +1,5 @@
+"""Build the unified pair-wise dataset from Webis-CMV-20 and the
+winning-args-corpus into ArgumentPair records."""
 
 import os
 import json

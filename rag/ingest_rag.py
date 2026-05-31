@@ -12,8 +12,8 @@ are kept in metadata; retrieve_local reassembles the full context block for
 the generator.
 
 Usage:
-    python -m preprocessing.ingest_rag
-    python -m preprocessing.ingest_rag --reset   # drop existing collection first
+    python -m rag.ingest_rag
+    python -m rag.ingest_rag --reset   # drop existing collection first
 """
 
 import argparse
@@ -32,7 +32,7 @@ ARGUMENT_MAX_CHARS = 6000
 def main(reset: bool = False) -> None:
     load_dotenv()
     if not INPUT_PARQUET.exists():
-        raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run preprocessing.classify_stance first.")
+        raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.classify_stance first.")
 
     df = pd.read_parquet(INPUT_PARQUET)
     print(f"Loaded {len(df)} pro-Israel arguments from {INPUT_PARQUET}.")

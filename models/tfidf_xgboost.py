@@ -1,3 +1,5 @@
+"""TF-IDF + XGBoost pair-wise baseline."""
+
 from scipy.sparse import hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 from xgboost import XGBClassifier

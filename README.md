@@ -18,12 +18,16 @@ The project has three parts:
 ## Repository layout
 
 ```
-preprocessing/   # data pipelines (Webis-CMV-20, winning-args-corpus, CMV-Israel)
+preprocessing/   # generic pair-wise data pipelines (Webis-CMV-20, winning-args-corpus)
+rag/             # pro-Israel RAG-corpus pipeline (scrape -> classify -> ingest)
 models/          # TF-IDF baselines + Qwen3-8B pair-wise ranker
-agents/          # LangGraph refinement workflow + retrieval backends
+agents/          # LangGraph refinement workflow + retrieval backends + generate entrypoint
+webapp/          # Gradio web UI: paste a CMV post, get a rebuttal (see "Web app")
+tests/           # offline graph-wiring / import smoke tests
 schemas.py       # Pydantic types shared across the pipelines
-docs/            # Local document store for the retriever
-data/            # Generated artifacts (gitignored)
+graph.png        # rendered topology of the agentic workflow (see "Agentic refinement")
+data/            # generated artifacts (gitignored)
+.chroma/         # Chroma vector store for the retriever (gitignored)
 ```
 
 ## Setup
@@ -41,7 +45,19 @@ Create a `.env` file at the repo root with whichever keys you need:
 OPENAI_API_KEY=...
 TAVILY_API_KEY=...          # optional, enables the web-search retrieval arm
 HF_TOKEN=...                # optional, for dataset/model uploads
+RANKER_PATH=...             # Qwen ranker checkpoint, for the agentic graph
 ```
+
+### Observability (optional)
+
+Both are opt-in and no-op unless the keys are present:
+
+- **LangSmith** traces every node / LLM call of the agentic graph. Enable with
+  `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY=ls__...`, and optionally
+  `LANGSMITH_PROJECT=argument-quality`.
+- **Weights & Biases** logs the Qwen QLoRA fine-tuning run. Enable with
+  `WANDB_API_KEY=...` (and optionally `WANDB_PROJECT=qwen-qlora-ranker`) before
+  running `uv run python -m models.qwen`.
 
 ## Data pipeline
 
@@ -52,7 +68,7 @@ dataset from two sources:
 - winning-args-corpus (Tan et al., 2016)
 
 ```bash
-python -m preprocessing.preprocess
+uv run python -m preprocessing.preprocess
 ```
 
 A semantic-similarity filter then removes off-topic and near-duplicate pairs.
@@ -62,16 +78,18 @@ both arguments are on-topic with respect to the original post and the two argume
 are not near-duplicates of each other.
 
 ```bash
-python -m preprocessing.filter_by_similarity
+uv run python -m preprocessing.filter_by_similarity
 ```
 
-For the Israel-focused RAG corpus, scrape CMV threads via arctic-shift and
-ingest the delta-awarded pro-Israel arguments into Chroma:
+For the Israel-focused RAG corpus, the `rag/` package scrapes CMV threads via
+arctic-shift, classifies each argument's stance, and ingests the high-confidence
+pro-Israel arguments (plus a few legal primary sources) into Chroma:
 
 ```bash
-python -m preprocessing.scrape_cmv_israel
-python -m preprocessing.classify_stance
-python -m preprocessing.ingest_rag
+uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
+uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
+uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
+uv run python -m rag.ingest_legal_sources   # -> Palmer/San Remo legal chunks
 ```
 
 ## Baselines
@@ -80,7 +98,7 @@ Run TF-IDF + Logistic Regression / Random Forest / XGBoost over the pair-wise
 dataset:
 
 ```bash
-python -m models.main
+uv run python -m models.main
 ```
 
 Results are appended to `results.csv`.
@@ -93,7 +111,7 @@ probability of `A` is calibrated from the top-logprob distribution at the
 answer token.
 
 ```bash
-python -m models.gpt_5_4_nano
+uv run python -m models.gpt_5_4_nano
 ```
 
 ## Qwen3-8B pair-wise ranker
@@ -103,59 +121,111 @@ delta vs. non-delta arguments. Scoring is order-invariant — each argument
 gets an independent forward pass and the higher score wins.
 
 ```bash
-python -m models.qwen
+uv run python -m models.qwen
 ```
 
 ## Agentic refinement
 
-The `agents` package wires a LangGraph workflow that alternates between two
-candidate arguments, refining each one against retrieved evidence until
-neither improves on the Qwen ranker (or `MAX_ITERS` is hit).
+The `agents` package wires a LangGraph workflow that drafts two candidate
+arguments, eliminates the weaker one up front on the Qwen ranker, then refines
+the survivor against retrieved evidence. Refinement is governed by two
+independent loops, each with its own cap:
+
+- **Grounding loop** (`hallucination_check -> refine`): re-refines while the
+  draft is ungrounded, up to `MAX_GROUND_RETRIES` times **per outer pass**
+  (reset by the router each pass).
+- **Outer / stance loop** (`stance_check -> router`): if the draft is not a
+  clearly pro-Israel reply, it reroutes for another refinement pass, up to
+  `MAX_OUTER_ITERS` passes; once the cap is hit, `force_regenerate` does one
+  last targeted pro-Israel rewrite.
+
+Worst case is therefore `MAX_OUTER_ITERS x MAX_GROUND_RETRIES` grounding
+refines (3 x 3 = 9).
 
 Four patterns are fused into the graph:
 
-- **Adaptive RAG** — the router picks between local Chroma, Tavily web
-  search, or no retrieval each iteration.
-- **Self-RAG** — `grade_docs` filters retrieved chunks for relevance.
+- **Adaptive RAG** — the router picks between local Chroma and Tavily web
+  search each pass.
+- **Self-RAG** — two layers: `grade_docs` gives a binary relevance verdict
+  (and triggers a web search if the local docs are irrelevant), and
+  `hallucination_check` verifies the refined draft is grounded in the evidence.
 - **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
-- **Reflexion** — the verbal critique persists across iterations; the Qwen
-  ranker supplies the scalar reward that decides keep-or-revert.
+- **Reflexion** — every critique is accumulated into a running
+  `critique_history` that the refiner consumes in full, so it stops repeating
+  fixed mistakes; the Qwen ranker supplies the one-time A-vs-B reward.
 
 ### Graph nodes
 
 - **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
   `arg_b`) from the topic and original post.
-- **router** — Adaptive-RAG: picks `local`, `web`, or `none` for the active
-  side this iteration; when it picks `web`, the same call also plans the
-  search queries that target the critique's evidence gaps.
+- **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
+  initial drafts, keeps the winner as the active side, and marks the loser
+  converged so only the survivor iterates from here. This is the only A-vs-B
+  decision in the graph, made when both drafts are at equal polish.
+- **router** — Adaptive-RAG: picks `local` or `web` for the active side this
+  pass; when it picks `web`, the same call also plans the search queries that
+  target the critique's evidence gaps. It also resets the grounding-retry
+  budget and clears any stale grounding verdict at the start of each pass. (Set
+  `FORCE_RETRIEVAL_MODE={local|web}` in the env to pin the route for debugging.)
 - **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
   CMV-Israel arguments) using the topic + post as the query.
-- **retrieve_web** — runs the router's planned queries through Tavily.
-- **skip_retrieval** — no-op when the router picks `none`.
-- **grade_docs** — Self-RAG relevance filter: in a single batched call, keeps
-  only the retrieved chunks the grader marks useful for refining the draft.
+- **retrieve_web** — runs the router's planned queries through Tavily,
+  restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
+- **grade_docs** — Self-RAG binary relevance verdict. If the docs are relevant
+  they feed `reflect`; if not, they are dropped and `web_search=True` routes to
+  the web-search fallback first.
+- **web_search** — fallback triggered by an irrelevant grade: runs a Tavily
+  search (planning queries from the critique if the router didn't) and fills
+  the citation pool with web results before reflecting.
 - **reflect** — generates a critique of the current draft grounded in the
-  retrieved evidence; the critique is persisted per side (Reflexion).
-- **refine** — rewrites the active side's draft using the critique and the
-  kept evidence; the prior version is saved as `arg_{side}_prev`.
-- **hallucination_check** — Self-RAG groundedness check on the new draft. If
-  ungrounded, folds issues into the critique and loops back to `refine`;
-  after `MAX_REFINE_RETRIES` failures, reverts and marks the side converged.
-- **rank_against_prev** — pairwise Qwen ranker between the new and previous
-  draft. If the new one loses, revert and mark the side converged.
-- **switch_side** — flips `active_side` to the other (non-converged) side.
-- **final_compare** — once both sides have converged or hit `MAX_ITERS`, runs
-  one final Qwen pairwise comparison between `arg_a` and `arg_b` to pick the
-  overall winner.
+  retrieved evidence, comparing it against the original post (what's missing /
+  superfluous). Each critique is appended to `critique_history` (Reflexion).
+- **refine** — rewrites the active side's draft using the full critique history
+  plus any **fix notes** (ungrounded-claim issues from `hallucination_check`
+  and/or a stance reason from `stance_check`), attaching inline `[n]` citations
+  to evidence-backed claims. Drops an empty `### Sources` footer if the model
+  cited nothing.
+- **hallucination_check** — Self-RAG binary groundedness check. Skipped when
+  retrieval was `local` (those chunks are example arguments, not factual
+  sources). Otherwise grades the draft; only a genuinely fabricated fact counts
+  as ungrounded (citation-marker problems are tolerated). An ungrounded verdict
+  spends one grounding retry and loops back to `refine` until the per-pass
+  budget is spent.
+- **stance_check** — verifies the draft is a clearly pro-Israel reply. On
+  failure it opens a new outer pass (records a `regen_reason` that the next
+  refine must fix) and reroutes to the router, or — once `MAX_OUTER_ITERS` is
+  hit — routes to `force_regenerate`.
+- **force_regenerate** — last-resort forced pro-Israel rewrite when the stance
+  check keeps failing at the outer cap, guaranteeing a pro-Israel output.
+- **final_compare** — declares the surviving side the winner, publishes the
+  result as `generation`, surfaces any grounded / pro-Israel warnings, and
+  prints the run's trajectory.
 
 Run end-to-end:
 
 ```bash
-python -m agents.graph.builder \
+uv run python -m agents.graph.builder \
   --topic "CMV: ..." \
   --post  "The original post body..."
 ```
 
 Graph topology:
 
-![graph](docs/graph.png)
+![graph](graph.png)
+
+## Web app
+
+A Gradio UI for trying the workflow interactively, without Reddit: paste a CMV
+**topic** and the **anti-Israel post body**, and it returns the generated
+rebuttal plus its grounded / pro-Israel status. It reuses the same
+`agents.generate.generate_pro_israel_response` entrypoint as the
+`agents.graph.builder` CLI, so both run identical generation logic.
+
+```bash
+uv run python -m webapp.app
+```
+
+Then open the local URL Gradio prints. A full run loads the Qwen ranker and
+makes several LLM + web-search calls, so expect tens of seconds to a couple of
+minutes per request. Needs `OPENAI_API_KEY`, `TAVILY_API_KEY`, `RANKER_PATH`,
+and `HF_TOKEN` in `.env`.
