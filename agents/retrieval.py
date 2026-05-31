@@ -2,8 +2,9 @@
 Retrieval backends for the Adaptive-RAG step.
 
 Two arms:
-  - local: Chroma vector store backed by ./docs (placeholder; populate by
-    dropping .md/.txt files into the docs/ directory).
+  - local: Chroma vector store (`pro_israel_corpus`), the delta-awarded
+    CMV-Israel arguments plus legal primary-source chunks ingested by the
+    `rag/` pipeline (`rag.ingest_rag` / `rag.ingest_legal_sources`).
   - web:   Tavily search. Requires TAVILY_API_KEY in the environment.
 
 Both retrievers expose the same interface: `.retrieve(query, k) -> list[str]`.
@@ -14,13 +15,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
 CHROMA_DIR = Path(__file__).resolve().parent.parent / ".chroma"
 COLLECTION_NAME = "pro_israel_corpus"
 
 
 class LocalRetriever:
-    """Chroma-backed local corpus. Empty until docs/ is populated."""
+    """Chroma-backed local corpus. Returns empty results until the `rag/`
+    ingestion scripts have populated the `pro_israel_corpus` collection."""
 
     def __init__(self, k: int = 4):
         from langchain_chroma import Chroma
@@ -34,31 +35,11 @@ class LocalRetriever:
             persist_directory=str(CHROMA_DIR),
         )
         if self.store._collection.count() == 0:
-            self._ingest_docs()
-
-    def _ingest_docs(self) -> None:
-        from langchain_community.document_loaders import DirectoryLoader, TextLoader
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-        if not DOCS_DIR.exists():
-            return
-        text_files = list(DOCS_DIR.glob("**/*.txt")) + list(DOCS_DIR.glob("**/*.md"))
-        if not text_files:
-            print(f"[LocalRetriever] No documents found in {DOCS_DIR}. Local arm will return empty results until populated.")
-            return
-
-        loader = DirectoryLoader(
-            str(DOCS_DIR),
-            glob="**/*.{md,txt}",
-            loader_cls=TextLoader,
-            show_progress=False,
-        )
-        docs = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
-        chunks = splitter.split_documents(docs)
-        if chunks:
-            self.store.add_documents(chunks)
-            print(f"[LocalRetriever] Indexed {len(chunks)} chunks from {len(text_files)} files.")
+            print(
+                "[LocalRetriever] pro_israel_corpus is empty; local arm will return "
+                "no results. Populate it with `uv run python -m rag.ingest_rag` "
+                "(and `rag.ingest_legal_sources`)."
+            )
 
     def retrieve(self, query: str, k: int | None = None, where: dict | None = None) -> list[str]:
         if self.store._collection.count() == 0:
@@ -71,7 +52,7 @@ class LocalRetriever:
         """Reassemble a retrieved argument with its post context for the generator.
 
         CMV-Israel docs embed the argument alone but carry topic/original_post
-        in metadata; loose docs/ chunks have neither, so we fall back to the
+        in metadata; legal-source chunks have neither, so we fall back to the
         bare page_content.
 
         Labels use bracket prefixes ('[topic]', '[original_post]', '[argument]')

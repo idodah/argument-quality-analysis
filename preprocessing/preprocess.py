@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from schemas import ArgumentPair
 
 from .data_creation import build_webis_raw, build_winning_raw
-from .text_utils import clean_text #, count_tokens
+from .text_utils import clean_text
 
 load_dotenv()
 
@@ -49,12 +49,6 @@ def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
             continue
         if delta_argument == nodelta_argument:
             continue
-
-        # delta_tokens = count_tokens(delta_argument)
-        # nodelta_tokens = count_tokens(nodelta_argument)
-
-        # if delta_tokens < 20 or nodelta_tokens < 20:
-        #     continue
 
         rows.append(ArgumentPair(
             thread_id= p.thread_id,
