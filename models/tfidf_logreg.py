@@ -1,3 +1,5 @@
+"""TF-IDF + Logistic Regression pair-wise baseline."""
+
 from scipy.sparse import hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression

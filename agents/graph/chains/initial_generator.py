@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agents import prompts
-from agents.graph.llm import chat, creative_llm
+from agents.llm import chat, creative_llm
 
 
 def _parse_two_responses(text: str) -> tuple[str, str]:

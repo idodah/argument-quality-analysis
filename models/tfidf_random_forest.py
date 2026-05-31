@@ -1,3 +1,5 @@
+"""TF-IDF + Random Forest pair-wise baseline."""
+
 from scipy.sparse import hstack
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer

@@ -11,6 +11,7 @@ def generate_initial(state: GraphState) -> GraphState:
     arg_a, arg_b = generate_initial_pair(state["topic"], state["original_post"])
     return {
         **state,
+        "post": state["original_post"],
         "arg_a": arg_a,
         "arg_b": arg_b,
         "arg_a_prev": "",
@@ -20,5 +21,11 @@ def generate_initial(state: GraphState) -> GraphState:
         "converged_a": False,
         "converged_b": False,
         "active_side": "A",
+        "documents": [],
+        "web_search": False,
+        "critique_history": [],
+        "outer_iter": 0,
+        "ground_retries": 0,
+        "regen_reason": "",
         "history": [],
     }

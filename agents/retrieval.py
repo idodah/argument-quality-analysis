@@ -73,6 +73,14 @@ class LocalRetriever:
         CMV-Israel docs embed the argument alone but carry topic/original_post
         in metadata; loose docs/ chunks have neither, so we fall back to the
         bare page_content.
+
+        Labels use bracket prefixes ('[topic]', '[original_post]', '[argument]')
+        rather than markdown '###' headers. The ### form collides with the
+        prompt structure used by reflect/refine/hallucination_check (all of
+        which use '###' for their own section headers), causing downstream
+        LLMs to parse chunk-internal headers as prompt-level structure and
+        treat the rest of the evidence as missing. Bracket labels are also
+        consistent with the web arm's '[url]' / '[title]' header format.
         """
         meta = doc.metadata or {}
         topic = meta.get("topic")
@@ -81,18 +89,21 @@ class LocalRetriever:
             return doc.page_content
         parts = []
         if topic:
-            parts.append(f"### Topic\n{topic}")
+            parts.append(f"[topic] {topic}")
         if post:
-            parts.append(f"### Original post\n{post}")
-        parts.append(f"### Persuasive argument (earned a delta)\n{doc.page_content}")
+            parts.append(f"[original_post]\n{post}")
+        parts.append(f"[argument (earned a delta on CMV)]\n{doc.page_content}")
         return "\n\n".join(parts)
 
 
 class WebRetriever:
     """Tavily-backed web retriever."""
 
-    def __init__(self, k: int = 4):
+    def __init__(self, k: int = 4, allowed_domains: list[str] | None = None):
         self.k = k
+        # When non-empty, Tavily restricts results to these domains. When empty
+        # or None, behavior matches the unfiltered baseline.
+        self.allowed_domains = list(allowed_domains) if allowed_domains else []
         api_key = os.environ.get("TAVILY_API_KEY")
         if not api_key:
             self.client = None
@@ -105,12 +116,15 @@ class WebRetriever:
     def retrieve(self, query: str, k: int | None = None) -> list[str]:
         if self.client is None:
             return []
+        search_kwargs = {
+            "query": query,
+            "max_results": k or self.k,
+            "search_depth": "advanced",
+        }
+        if self.allowed_domains:
+            search_kwargs["include_domains"] = self.allowed_domains
         try:
-            resp = self.client.search(
-                query=query,
-                max_results=k or self.k,
-                search_depth="advanced",
-            )
+            resp = self.client.search(**search_kwargs)
         except Exception as e:
             print(f"[WebRetriever] Search failed: {e}")
             return []
