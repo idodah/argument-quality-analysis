@@ -45,8 +45,8 @@ checkpoints/
 # CLI entrypoint (local-only)
 run.py
 
-# Generated graph images kept under docs/ (the published graph lives at repo root: graph.png)
-docs/*.png
+# Local-only docs folder (the published graph lives at repo root: graph.png)
+docs/
 
 # Reddit harvester (PRAW-based; Reddit API access not available for this account).
 # The shared generation entrypoint it used lives in agents/generate.py, so the

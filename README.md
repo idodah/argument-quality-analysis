@@ -101,8 +101,6 @@ dataset:
 uv run python -m models.main
 ```
 
-Results are appended to `results.csv`.
-
 ## GPT-5.4-nano zero-shot baseline
 
 Zero-shot pair-wise prompting of GPT-5.4-nano (no fine-tuning). Both
