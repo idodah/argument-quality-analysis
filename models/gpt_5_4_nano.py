@@ -21,6 +21,9 @@ from models.data import RANDOM_SEED, evaluate, load_data, make_prompt, save_resu
 MODEL_ID = "gpt-5.4-nano"
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2.0
+# Confidence nudge for the no-logprobs fallback: enough to break the A/B tie in
+# the right direction, small enough to stay near-neutral in roc_auc_score.
+_FALLBACK_MARGIN = 0.01
 
 
 def _predict_one(client: OpenAI, prompt: dict) -> tuple[int, float]:
@@ -72,11 +75,16 @@ def _expected_choice(resp) -> tuple[int, float]:
 
 
 def _parse_choice_text(text: str) -> tuple[int, float]:
+    """Fallback when no logprobs are available: we have a hard label but no
+    calibrated confidence. Return a probability only marginally off 0.5 in the
+    decided direction so the pred is tie-broken correctly while the value stays
+    near-neutral in roc_auc_score (a fabricated 0.0/1.0 would let a confident-
+    but-wrong fallback distort the AUC ranking as if the model were certain)."""
     first = next((c for c in text if c in ("A", "B")), None)
     if first == "A":
-        return 1, 1.0
+        return 1, 0.5 + _FALLBACK_MARGIN
     if first == "B":
-        return 0, 0.0
+        return 0, 0.5 - _FALLBACK_MARGIN
     return 0, 0.5
 
 
