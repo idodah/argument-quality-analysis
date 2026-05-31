@@ -6,7 +6,7 @@ It exercises the worst case — stance always fails (forces the outer loop to it
 cap and then force_regenerate) and grounding always fails (forces the grounding
 loop to its cap each pass) — and asserts the run terminates and the caps hold.
 
-Run: `uv run python tests/test_graph_offline.py`
+Run: `uv run pytest tests/test_graph_offline.py`
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -131,74 +133,42 @@ def _run(*, stance_ok: bool, grounded: bool) -> dict:
             p.stop()
 
 
-def _check(name: str, cond: bool, detail: str = "") -> bool:
-    mark = "PASS" if cond else "FAIL"
-    print(f"  [{mark}] {name}" + (f" — {detail}" if detail else ""))
-    return cond
-
-
-def main() -> int:
-    ok = True
-
-    print("Scenario 1: happy path (grounded + pro-Israel on first pass)")
+def test_happy_path_single_pass():
+    """Grounded + pro-Israel on the first pass: one refine, one stance check, no force."""
     out = _run(stance_ok=True, grounded=True)
-    ok &= _check("terminates with a winner", out.get("winner") in ("A", "B"))
-    ok &= _check("reports pro_israel_reply=True", out.get("pro_israel_reply") is True)
-    ok &= _check("exactly 1 refine", calls["refine"] == 1, f"refine={calls['refine']}")
-    ok &= _check("exactly 1 stance check", calls["stance"] == 1, f"stance={calls['stance']}")
-    ok &= _check("force_regenerate NOT used", calls["force"] == 0, f"force={calls['force']}")
-    ok &= _check("eliminate_loser ranked once", calls["rank"] == 1, f"rank={calls['rank']}")
-    print(f"  calls: {dict(calls)}")
+    assert out.get("winner") in ("A", "B")
+    assert out.get("pro_israel_reply") is True
+    assert calls["refine"] == 1
+    assert calls["stance"] == 1
+    assert calls["force"] == 0
+    assert calls["rank"] == 1  # eliminate_loser ranks exactly once
 
-    print("\nScenario 2: worst case (grounding always fails, stance always fails)")
+
+def test_worst_case_caps_hold():
+    """Grounding and stance both always fail: the loops hit their caps, then
+    force_regenerate runs once and the graph still terminates."""
     out = _run(stance_ok=False, grounded=False)
-    ok &= _check("terminates with a winner", out.get("winner") in ("A", "B"))
+    assert out.get("winner") in ("A", "B")
     # Outer loop: MAX_OUTER_ITERS passes, last one -> force_regenerate.
-    ok &= _check(
-        "router called MAX_OUTER_ITERS times",
-        calls["router"] == MAX_OUTER_ITERS,
-        f"router={calls['router']} expected={MAX_OUTER_ITERS}",
-    )
-    ok &= _check("force_regenerate used exactly once", calls["force"] == 1, f"force={calls['force']}")
-    # Each refine is followed by a grounding check; on failure it spends one
-    # retry and refines again, so a pass that never grounds does exactly
-    # MAX_GROUND_RETRIES refines. Worst case = MAX_OUTER_ITERS x MAX_GROUND_RETRIES.
+    assert calls["router"] == MAX_OUTER_ITERS
+    assert calls["force"] == 1
+    # A pass that never grounds does exactly MAX_GROUND_RETRIES refines, so the
+    # worst case is MAX_OUTER_ITERS x MAX_GROUND_RETRIES refines (3 x 2 = 6).
     expected_refine = MAX_OUTER_ITERS * MAX_GROUND_RETRIES
-    ok &= _check(
-        "refine count = outer x ground_retries (3 x 2 = 6 worst case)",
-        calls["refine"] == expected_refine,
-        f"refine={calls['refine']} expected={expected_refine}",
-    )
-    # Grounding checks: one per refine.
-    ok &= _check(
-        "grounding checks = refine count",
-        calls["grounding"] == expected_refine,
-        f"grounding={calls['grounding']} refine={calls['refine']}",
-    )
-    # Stance checked once per outer pass.
-    ok &= _check(
-        "stance checks = MAX_OUTER_ITERS",
-        calls["stance"] == MAX_OUTER_ITERS,
-        f"stance={calls['stance']} expected={MAX_OUTER_ITERS}",
-    )
-    ok &= _check("final output flagged not pro-Israel? (force sets True)", out.get("pro_israel_reply") is True)
-    print(f"  calls: {dict(calls)}")
+    assert calls["refine"] == expected_refine
+    assert calls["grounding"] == expected_refine  # one grounding check per refine
+    assert calls["stance"] == MAX_OUTER_ITERS      # one stance check per outer pass
+    assert out.get("pro_israel_reply") is True     # force_regenerate sets it True
 
-    print("\nScenario 3: grounded but stance fails (no grounding retries)")
+
+def test_stance_fails_but_grounded():
+    """Grounded immediately but stance keeps failing: one refine per outer pass
+    (no grounding retries), force_regenerate once."""
     out = _run(stance_ok=False, grounded=True)
-    ok &= _check("terminates", out.get("winner") in ("A", "B"))
-    ok &= _check("force_regenerate used once", calls["force"] == 1, f"force={calls['force']}")
-    # 1 refine per outer pass (grounding passes immediately).
-    ok &= _check(
-        "refine count = MAX_OUTER_ITERS",
-        calls["refine"] == MAX_OUTER_ITERS,
-        f"refine={calls['refine']} expected={MAX_OUTER_ITERS}",
-    )
-    print(f"  calls: {dict(calls)}")
-
-    print("\n" + ("ALL CHECKS PASSED" if ok else "SOME CHECKS FAILED"))
-    return 0 if ok else 1
+    assert out.get("winner") in ("A", "B")
+    assert calls["force"] == 1
+    assert calls["refine"] == MAX_OUTER_ITERS
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(pytest.main([__file__, "-v"]))

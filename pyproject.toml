@@ -38,4 +38,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pypdf>=6.12.2",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

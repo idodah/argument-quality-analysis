@@ -59,6 +59,19 @@ Both are opt-in and no-op unless the keys are present:
   `WANDB_API_KEY=...` (and optionally `WANDB_PROJECT=qwen-qlora-ranker`) before
   running `uv run python -m models.qwen`.
 
+### Tests
+
+The `tests/` suite is fully offline — no API keys, network, or model loading
+(every LLM / retrieval / Qwen boundary is stubbed). Run it with:
+
+```bash
+uv run pytest
+```
+
+It covers the graph's loop caps and termination (`test_graph_offline.py`), the
+deterministic string/parse helpers (`test_helpers.py`), and the package layout /
+shared entrypoint (`test_layout_imports.py`).
+
 ## Data pipeline
 
 The preprocessing pipeline produces a unified pair-wise argument quality
