@@ -23,7 +23,7 @@ rag/             # pro-Israel RAG-corpus pipeline (scrape -> classify -> ingest)
 models/          # TF-IDF baselines + Qwen3-8B pair-wise ranker
 agents/          # LangGraph refinement workflow + retrieval backends + generate entrypoint
 webapp/          # Gradio web UI: paste a CMV post, get a rebuttal (see "Web app")
-tests/           # offline graph-wiring / import smoke tests
+tests/           # offline graph-wiring, helper-unit, and import smoke tests
 schemas.py       # Pydantic types shared across the pipelines
 graph.png        # rendered topology of the agentic workflow (see "Agentic refinement")
 data/            # generated artifacts (gitignored)
