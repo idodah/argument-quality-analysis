@@ -149,7 +149,7 @@ class PairCollator:
 
 
 class RankingModel(nn.Module):
-    """PEFT base model + small scalar score head over the last non-pad token."""
+    """PEFT base model + small scalar score head over the mean-pooled non-pad tokens."""
 
     def __init__(self, base_model, hidden_size: int):
         super().__init__()
