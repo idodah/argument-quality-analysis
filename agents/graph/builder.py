@@ -18,7 +18,7 @@ Flow:
        no & outer cap hit -> force_regenerate -> final_compare -> END
 
 Two independent caps: MAX_OUTER_ITERS outer passes x MAX_GROUND_RETRIES grounding
-re-refines each (3 x 3 -> up to 9 grounding refines). Reflexion memory: reflect
+re-refines each (3 x 2 -> up to 6 grounding refines). Reflexion memory: reflect
 accumulates every critique into critique_history, which refine consumes in full.
 Qwen is used only at eliminate_loser (no per-iteration ranking).
 """
