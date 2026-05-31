@@ -129,7 +129,7 @@ def active_view(state: GraphState) -> tuple[Side, str, str, str]:
 
 
 _CITE_MARKER_RE = re.compile(r"\s*\[\d+(?:\s*,\s*\d+)*\]")
-_SOURCES_BLOCK_RE = re.compile(r"\n+#+\s*Sources.*\Z", re.IGNORECASE | re.DOTALL)
+_SOURCES_BLOCK_RE = re.compile(r"\n*#+\s*Sources.*\Z", re.IGNORECASE | re.DOTALL)
 
 
 def strip_citations(text: str) -> str:
