@@ -4,16 +4,22 @@ A research codebase that studies what makes an argument persuasive on Reddit's
 r/changemyview (CMV), and then uses those signals to drive an agentic
 refinement loop that improves a candidate argument against a given post.
 
-The project has three parts:
+The project is organized around three core parts, plus a retrieval-corpus
+pipeline, a web UI, and an offline test suite:
 
 1. **Preprocessing** — building a clean pair-wise dataset of delta-awarded vs.
-   non-delta CMV arguments, plus an Israel-focused subset used as the
-   retrieval corpus.
+   non-delta CMV arguments.
 2. **Models** — baseline TF-IDF classifiers, a zero-shot GPT-5.4-nano
    pair-wise baseline, and a QLoRA fine-tuned Qwen3-8B pair-wise ranker.
 3. **Agents** — a LangGraph workflow that refines two opposing arguments
    against each other using Adaptive-RAG, Self-RAG, Reflective-RAG, and
    Reflexion patterns, with the Qwen ranker as the reward signal.
+
+Supporting these are **RAG** (`rag/`), the pro-Israel retrieval-corpus pipeline
+that scrapes, classifies, and ingests CMV arguments into Chroma for the agents;
+the **web app** (`webapp/`), a Gradio UI over the same generation entrypoint as
+the CLI; and **tests** (`tests/`), a fully offline suite covering graph wiring,
+helpers, and the package layout.
 
 ## Repository layout
 
@@ -108,7 +114,14 @@ uv run python -m rag.ingest_legal_sources   # -> Palmer/San Remo legal chunks
 ## Baselines
 
 Run TF-IDF + Logistic Regression / Random Forest / XGBoost over the pair-wise
-dataset:
+dataset. The two arguments share a single TF-IDF vocabulary and enter the
+classifier as one *signed difference* vector — `tfidf(arg_a) - tfidf(arg_b)` —
+rather than as two concatenated blocks (context fields are vectorized as-is).
+Swapping the two arguments therefore just negates the argument features, so the
+model sees only the contrast between them and can't learn a "slot A is usually
+the delta" positional shortcut. This holds the baselines to the same
+order-invariant bar as the Qwen ranker, which scores each argument
+independently. The shared featurizer lives in `models.tfidf_features.PairTfidf`.
 
 ```bash
 uv run python -m models.main
