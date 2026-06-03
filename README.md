@@ -84,7 +84,7 @@ The preprocessing pipeline produces a unified pair-wise argument quality
 dataset from two sources:
 
 - [Webis-CMV-20](https://webis.de/data/webis-cmv-20.html)
-- winning-args-corpus (Tan et al., 2016)
+- [winning-args-corpus (Tan et al., 2016)](https://convokit.cornell.edu/documentation/winning.html)
 
 ```bash
 uv run python -m preprocessing.preprocess
