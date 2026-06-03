@@ -219,8 +219,6 @@ Four patterns are fused into the graph:
   failure it opens a new outer pass (records a `regen_reason` that the next
   refine must fix) and reroutes to the router, or — once `MAX_OUTER_ITERS` is
   hit — routes to `force_regenerate`.
-- **force_regenerate** — last-resort forced pro-Israel rewrite when the stance
-  check keeps failing at the outer cap, guaranteeing a pro-Israel output.
 - **finalize** — declares the surviving side the winner, publishes the
   result as `generation`, surfaces any grounded / pro-Israel warnings, and
   prints the run's trajectory.
