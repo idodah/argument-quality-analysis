@@ -74,6 +74,20 @@ def retrieve_web(state: GraphState) -> GraphState:
     return {**state, "retrieved": deduped, "documents": deduped}
 
 
+def skip_retrieval(state: GraphState) -> GraphState:
+    """Router 'none' arm: skip retrieval this pass.
+
+    Clears `retrieved` so reflect/refine see no new evidence this iteration,
+    but PRESERVES `documents` (the running citation pool from earlier passes)
+    so refine can still cite previously-grounded facts. The downstream
+    hallucination_check skips on retrieval_mode=='none' for the same reason it
+    skips on 'local': there is no fresh factual evidence to ground against.
+    """
+    _side, _current, _prev, _critique = active_view(state)
+    print(f"[skip_retrieval] side={_side} router chose 'none' — no new retrieval this pass")
+    return {**state, "retrieved": []}
+
+
 def web_search(state: GraphState) -> GraphState:
     """Self-RAG web-search fallback, triggered when grade_docs finds the local
     documents irrelevant (and drops them). Runs a Tavily search (max_results=5)

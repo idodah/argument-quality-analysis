@@ -30,13 +30,14 @@ def router(state: GraphState) -> GraphState:
         if mode != "web":
             queries = []
 
-    # Each outer pass starts fresh: reset the grounding-retry budget and clear
-    # any grounding verdict left over from the previous pass, so stale ungrounded
-    # issues don't leak into this pass's refine before it has been re-graded.
+    # Each refinement pass starts fresh: reset the grounding-retry budget and
+    # clear any grounding verdict left over from the previous pass, so stale
+    # ungrounded issues don't leak into this pass's refine before it has been
+    # re-graded.
     regen = state.get("regen_reason") or ""
     if regen:
-        print(f"[router] pass {state.get('outer_iter', 0)}: pro-Israel refinement (reason: {regen})")
-    print(f"[router] side={side} outer_iter={state.get('outer_iter', 0)} -> {mode} (queries={len(queries)})")
+        print(f"[router] refine pass {state.get('refine_iter', 0)}: stance fix (reason: {regen})")
+    print(f"[router] side={side} refine_iter={state.get('refine_iter', 0)} -> {mode} (queries={len(queries)})")
     return {
         **state,
         "retrieval_mode": mode,
