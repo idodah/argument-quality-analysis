@@ -38,13 +38,15 @@ def hallucination_check(state: GraphState) -> GraphState:
     side = state["active_side"]
     draft = state["arg_a"] if side == "A" else state["arg_b"]
     history = state.get("history", [])
-    pass_n = state.get("outer_iter", 0)
+    pass_n = state.get("refine_iter", 0)
 
     # Local retrieval: evidence is example arguments, not source docs -> grounded.
-    if state.get("retrieval_mode") == "local":
-        print(f"[hallucination_check] side={side} grounded=True (local retrieval skipped)")
-        history = history + [{"side": side, "outer_iter": pass_n, "stage": "hallucination_check",
-                              "grounded": True, "skipped": "local_retrieval"}]
+    # 'none' retrieval: no fresh factual evidence to ground against this pass.
+    mode = state.get("retrieval_mode")
+    if mode in ("local", "none"):
+        print(f"[hallucination_check] side={side} grounded=True ({mode} retrieval skipped)")
+        history = history + [{"side": side, "refine_iter": pass_n, "stage": "hallucination_check",
+                              "grounded": True, "skipped": f"{mode}_retrieval"}]
         return {**state, "grounded": True, "hallucination_issues": [], "history": history}
 
     evidence = state.get("documents", []) or state.get("retrieved", []) or []
@@ -65,7 +67,7 @@ def hallucination_check(state: GraphState) -> GraphState:
     for i, issue in enumerate(fact_issues, 1):
         print(f"  [fact issue {i}] {issue}")
 
-    history = history + [{"side": side, "outer_iter": pass_n, "stage": "hallucination_check",
+    history = history + [{"side": side, "refine_iter": pass_n, "stage": "hallucination_check",
                           "grounded": grounded, "issues": fact_issues, "ground_retries": ground_retries}]
     return {**state, "grounded": grounded, "hallucination_issues": fact_issues,
             "ground_retries": ground_retries, "history": history}

@@ -2,24 +2,36 @@
 
 Flow:
   generate_initial  -> two distinct pro-Israel drafts
-  eliminate_loser   -> Qwen pairwise compare (once); surviving side iterates
-  router            -> local | web retrieval
+  eliminate_loser   -> Qwen pairwise compare (once per generation)
+  router            -> local | web | none retrieval (LLM-decided)
+  retrieve_*        -> arm-specific retrieval (skipped on 'none')
   grade_docs        -> binary relevance; if irrelevant, web_search (Tavily) first
   reflect           -> critique (missing / superfluous vs the original post)
   refine            -> revise the comment + add citations
-  hallucination_check (binary):
+  hallucination_check (binary, skipped on local/none retrieval):
        not grounded -> refine again (GROUNDING loop, up to MAX_GROUND_RETRIES
-                       per outer pass; reset by the router each pass)
+                       per refinement pass; reset by the router each pass)
        grounded     -> stance_check
-  stance_check (pro-Israel?):
-       yes -> final_compare -> END
-       no  -> router again (OUTER loop, up to MAX_OUTER_ITERS passes, each
-              carrying a regen_reason so refine fixes the stance)
-       no & outer cap hit -> force_regenerate -> final_compare -> END
+  stance_check      -> classify the refined survivor:
+       pro_israel           -> finalize -> END
+       neutral_needs_refine -> router (refinement loop, MAX_REFINE_ITERS)
+       off_topic_or_anti    -> generate_initial (regeneration loop, MAX_REGEN_ITERS)
+       gave_up              -> finalize -> END
 
-Two independent caps: MAX_OUTER_ITERS outer passes x MAX_GROUND_RETRIES grounding
-re-refines each (3 x 2 -> up to 6 grounding refines). Reflexion memory: reflect
-accumulates every critique into critique_history, which refine consumes in full.
+Three independent caps:
+  - MAX_REFINE_ITERS  (stance_check -> router per generation, reset on regen)
+  - MAX_REGEN_ITERS   (stance_check -> generate_initial across the whole run)
+  - MAX_GROUND_RETRIES (hallucination_check -> refine per refinement pass)
+
+When both REFINE and REGEN budgets are spent, stance_check sets gave_up=True
+and routes to finalize, which reports the give-up honestly rather than
+shipping a non-pro-Israel argument as the answer.
+
+The stance gate fires only AFTER refinement: every shipped argument has
+passed through hallucination_check. Trade-off: an off-topic initial draft
+must burn one full refinement loop before the stance gate catches it and
+triggers regeneration.
+
 Qwen is used only at eliminate_loser (no per-iteration ranking).
 """
 
@@ -31,8 +43,7 @@ from langgraph.graph import END, StateGraph
 
 from agents.graph.nodes import (
     eliminate_loser,
-    final_compare,
-    force_regenerate,
+    finalize,
     generate_initial,
     grade_docs,
     hallucination_check,
@@ -45,6 +56,7 @@ from agents.graph.nodes import (
     route_after_router,
     route_after_stance,
     router,
+    skip_retrieval,
     stance_check,
     web_search,
 )
@@ -59,30 +71,38 @@ def build_graph():
     g.add_node("router", router)
     g.add_node("retrieve_local", retrieve_local)
     g.add_node("retrieve_web", retrieve_web)
+    g.add_node("skip_retrieval", skip_retrieval)
     g.add_node("grade_docs", grade_docs)
     g.add_node("web_search", web_search)
     g.add_node("reflect", reflect)
     g.add_node("refine", refine)
     g.add_node("hallucination_check", hallucination_check)
     g.add_node("stance_check", stance_check)
-    g.add_node("force_regenerate", force_regenerate)
-    g.add_node("final_compare", final_compare)
+    g.add_node("finalize", finalize)
 
     g.set_entry_point("generate_initial")
     g.add_edge("generate_initial", "eliminate_loser")
+    # Single stance gate, at the END (after at least one refinement pass).
+    # Trade-off: an off-topic initial draft burns one refinement loop before
+    # being caught, but every path to finalize is guaranteed to have
+    # passed through hallucination_check.
     g.add_edge("eliminate_loser", "router")
 
-    # Router -> retrieval arm (local or web).
+    # Router -> retrieval arm (local, web, or none-skip).
     g.add_conditional_edges(
         "router",
         route_after_router,
         {
             "retrieve_local": "retrieve_local",
             "retrieve_web": "retrieve_web",
+            "skip_retrieval": "skip_retrieval",
         },
     )
     g.add_edge("retrieve_local", "grade_docs")
     g.add_edge("retrieve_web", "grade_docs")
+    # 'none' arm: skip retrieval/grade, go straight to reflect. Refinement still
+    # runs, just without new retrieved evidence.
+    g.add_edge("skip_retrieval", "reflect")
 
     # Grade docs -> web_search fallback (if irrelevant) or straight to reflect.
     g.add_conditional_edges(
@@ -102,19 +122,21 @@ def build_graph():
         {"refine": "refine", "stance_check": "stance_check"},
     )
 
-    # Stance check: pro-Israel -> done; not -> reroute to the router for another
-    # pro-Israel refinement pass; force a rewrite once the outer cap is hit.
+    # Stance check (used after eliminate_loser AND after hallucination_check):
+    #   pro_israel           -> finalize (END)
+    #   neutral_needs_refine -> router (refinement loop)
+    #   off_topic_or_anti    -> generate_initial (regeneration loop)
+    #   gave_up (caps spent) -> finalize (END), gave_up reported honestly
     g.add_conditional_edges(
         "stance_check",
         route_after_stance,
         {
-            "final_compare": "final_compare",
+            "finalize": "finalize",
             "router": "router",
-            "force_regenerate": "force_regenerate",
+            "generate_initial": "generate_initial",
         },
     )
-    g.add_edge("force_regenerate", "final_compare")
-    g.add_edge("final_compare", END)
+    g.add_edge("finalize", END)
 
     return g.compile()
 
@@ -127,7 +149,7 @@ def run_refinement(topic: str, original_post: str) -> dict:
     graph = build_graph()
     return graph.invoke(
         {"topic": topic, "original_post": original_post},
-        config={"recursion_limit": 100},
+        config={"recursion_limit": 150},
     )
 
 

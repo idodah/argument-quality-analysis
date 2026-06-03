@@ -1,8 +1,10 @@
 """Adaptive-RAG router + web-query planner: one call returns mode and queries.
 
-The router picks between two retrieval sources, 'local' or 'web'. When mode='web'
-the same LLM call also plans the web search queries that target the critique's
-evidence gaps, avoiding a second round-trip.
+The router picks one of three retrieval modes: 'local' (curated CMV corpus),
+'web' (Tavily), or 'none' (skip retrieval; the current draft is already strong
+enough to refine without new evidence). When mode='web' the same LLM call also
+plans the web search queries that target the critique's evidence gaps,
+avoiding a second round-trip.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from agents.llm import chat, deterministic_llm
 from agents.graph.state import WEB_QUERIES, RetrievalMode
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+_VALID_MODES: set[RetrievalMode] = {"local", "web", "none"}
 
 
 def _parse_decision(text: str, n: int) -> tuple[RetrievalMode, list[str]]:
@@ -28,7 +31,12 @@ def _parse_decision(text: str, n: int) -> tuple[RetrievalMode, list[str]]:
     except json.JSONDecodeError:
         return "local", []
     raw_mode = str(obj.get("mode", "")).lower().strip()
-    mode: RetrievalMode = "web" if raw_mode.startswith("web") else "local"
+    if raw_mode.startswith("web"):
+        mode: RetrievalMode = "web"
+    elif raw_mode.startswith("none") or raw_mode == "skip":
+        mode = "none"
+    else:
+        mode = "local"
     raw_queries = obj.get("queries") or []
     if not isinstance(raw_queries, list):
         raw_queries = []

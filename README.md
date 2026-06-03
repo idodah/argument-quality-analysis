@@ -221,7 +221,7 @@ Four patterns are fused into the graph:
   hit — routes to `force_regenerate`.
 - **force_regenerate** — last-resort forced pro-Israel rewrite when the stance
   check keeps failing at the outer cap, guaranteeing a pro-Israel output.
-- **final_compare** — declares the surviving side the winner, publishes the
+- **finalize** — declares the surviving side the winner, publishes the
   result as `generation`, surfaces any grounded / pro-Israel warnings, and
   prints the run's trajectory.
 

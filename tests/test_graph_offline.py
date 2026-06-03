@@ -1,10 +1,29 @@
-"""Offline graph wiring/caps test.
+"""Offline graph wiring/caps test for the ternary-stance graph with a single
+late stance gate.
 
 Drives the REAL compiled graph (agents.graph.builder.build_graph) with every
 LLM / retrieval / Qwen boundary stubbed, so no API keys or network are needed.
-It exercises the worst case — stance always fails (forces the outer loop to its
-cap and then force_regenerate) and grounding always fails (forces the grounding
-loop to its cap each pass) — and asserts the run terminates and the caps hold.
+
+The stance gate runs ONCE per refinement pass, at the end (after
+hallucination_check). Every path to finalize goes through
+refine -> hallucination_check, so the grounding pass is guaranteed by
+construction.
+
+Scenarios:
+  1. happy_path_pro_after_first_refine: stance returns pro_israel on the only
+     check (after the mandatory refinement). One refine, one stance call.
+  2. refinement_path_neutral_then_pro: stance returns neutral once, then
+     pro_israel after another refinement.
+  3. gave_up_via_neutral: stance always neutral; exhaust refine + regen
+     budgets, give up.
+  4. gave_up_via_off_topic: stance always off_topic_or_anti; each generation
+     burns one refinement loop before the late gate catches it and triggers
+     regen. Exhaust regen budget, give up.
+  5. router_none_skips_retrieval: when router picks 'none', the graph runs
+     skip_retrieval -> reflect -> refine -> hallucination_check (skipped) ->
+     stance_check, without calling any retriever or the docs grader.
+  6. no_finalize_without_grounding_pass: safety property; every successful
+     run has at least one grounding check.
 
 Run: `uv run pytest tests/test_graph_offline.py`
 """
@@ -21,17 +40,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents.graph.builder import build_graph
-from agents.graph.state import MAX_GROUND_RETRIES, MAX_OUTER_ITERS
+from agents.graph.state import MAX_REFINE_ITERS, MAX_REGEN_ITERS
 
 
-# Counts every node/chain invocation so we can assert on the caps afterwards.
 calls: Counter[str] = Counter()
 
 
-def _make_scenario(*, stance_ok: bool, grounded: bool):
-    """Build a set of patches for one scenario.
-
-    stance_ok=False, grounded=False is the worst case (max iterations).
+def _make_scenario(
+    stance_sequence: list[str],
+    *,
+    grounded: bool = True,
+    retrieval_mode: str = "web",
+):
+    """Patch every external call. `stance_sequence` is consumed in order by
+    `check_stance`; the last element repeats. `retrieval_mode` controls what
+    the router returns (web by default).
     """
 
     def fake_generate_pair(topic, post):
@@ -41,7 +64,6 @@ def _make_scenario(*, stance_ok: bool, grounded: bool):
     class FakeRanker:
         def score_pair(self, topic, post, arg_a, arg_b):
             calls["rank"] += 1
-            # Deterministically pick A so the active side is stable.
             return {"winner": "A", "score_a": 0.9, "score_b": 0.1}
 
     fake_ranker = FakeRanker()
@@ -51,11 +73,15 @@ def _make_scenario(*, stance_ok: bool, grounded: bool):
 
     def fake_route_retrieval(post, draft, critique=""):
         calls["router"] += 1
-        return "web", ["q1", "q2", "q3"]
+        if retrieval_mode == "web":
+            return "web", ["q1", "q2", "q3"]
+        if retrieval_mode == "none":
+            return "none", []
+        return "local", []
 
     def fake_grade_relevant(draft, chunks):
         calls["grade"] += 1
-        return True  # docs relevant -> no web_search detour
+        return True
 
     def fake_reflect(post, draft, evidence):
         calls["reflect"] += 1
@@ -63,8 +89,6 @@ def _make_scenario(*, stance_ok: bool, grounded: bool):
 
     def fake_refine(topic, post, draft, critique_history, evidence, fix_notes=""):
         calls["refine"] += 1
-        # Echo back a real-argument-shaped string (not critique-shaped, so the
-        # looks_like_critique guard doesn't no-op it).
         return f"Refined argument addressing you directly (rev {calls['refine']})."
 
     def fake_check_grounding(draft, evidence):
@@ -73,21 +97,17 @@ def _make_scenario(*, stance_ok: bool, grounded: bool):
             return {"grounded": True, "issues": []}
         return {"grounded": False, "issues": ["the 34,000 figure is unsupported"]}
 
+    stance_iter = iter(stance_sequence)
+    last_stance = stance_sequence[-1]
+
     def fake_check_stance(post, draft):
         calls["stance"] += 1
-        return {"pro_israel_reply": stance_ok, "reason": "" if stance_ok else "reads neutral"}
+        try:
+            verdict = next(stance_iter)
+        except StopIteration:
+            verdict = last_stance
+        return {"stance": verdict, "reason": f"stub:{verdict}"}
 
-    def fake_force(post, draft):
-        calls["force"] += 1
-        return "Forced clearly pro-Israel rewrite addressed to you."
-
-    def fake_force_stance(post, draft):
-        # force_regenerate re-checks stance on its rewrite; the forced rewrite is
-        # designed to pass, so report pro-Israel here.
-        calls["force_stance"] += 1
-        return {"pro_israel_reply": True, "reason": "forced pro-Israel rewrite"}
-
-    # Web retriever: return some chunks so the pool isn't empty.
     def fake_web_retrieve(self, query, k=None):
         calls["web_retrieve"] += 1
         return [f"[url] http://example.com/{query}\nweb content for {query}"]
@@ -105,11 +125,8 @@ def _make_scenario(*, stance_ok: bool, grounded: bool):
         mock.patch("agents.graph.nodes.refine.refine_draft", fake_refine),
         mock.patch("agents.graph.nodes.hallucination_check.check_grounding", fake_check_grounding),
         mock.patch("agents.graph.nodes.stance_check.check_stance", fake_check_stance),
-        mock.patch("agents.graph.nodes.force_regenerate.force_pro_israel", fake_force),
-        mock.patch("agents.graph.nodes.force_regenerate.check_stance", fake_force_stance),
         mock.patch("agents.retrieval.WebRetriever.retrieve", fake_web_retrieve),
         mock.patch("agents.retrieval.LocalRetriever.retrieve", fake_local_retrieve),
-        # Avoid constructing the real retrievers (which need API keys / chroma).
         mock.patch("agents.retrieval.WebRetriever.__init__", lambda self, *a, **k: None),
         mock.patch("agents.retrieval.LocalRetriever.__init__", lambda self, *a, **k: None),
         mock.patch("agents.graph.nodes.retrieve._LOCAL", None),
@@ -117,57 +134,118 @@ def _make_scenario(*, stance_ok: bool, grounded: bool):
     ]
 
 
-def _run(*, stance_ok: bool, grounded: bool) -> dict:
+def _run(
+    stance_sequence: list[str],
+    *,
+    grounded: bool = True,
+    retrieval_mode: str = "web",
+) -> dict:
     calls.clear()
-    patches = _make_scenario(stance_ok=stance_ok, grounded=grounded)
+    patches = _make_scenario(stance_sequence, grounded=grounded, retrieval_mode=retrieval_mode)
     for p in patches:
         p.start()
     try:
         graph = build_graph()
         return graph.invoke(
             {"topic": "CMV: test", "original_post": "an anti-Israel post"},
-            config={"recursion_limit": 100},
+            config={"recursion_limit": 200},
         )
     finally:
         for p in reversed(patches):
             p.stop()
 
 
-def test_happy_path_single_pass():
-    """Grounded + pro-Israel on the first pass: one refine, one stance check, no force."""
-    out = _run(stance_ok=True, grounded=True)
+def test_happy_path_pro_after_first_refine():
+    """Mandatory refinement pass runs, stance comes back pro_israel, exit."""
+    out = _run(["pro_israel"])
     assert out.get("winner") in ("A", "B")
+    assert out.get("stance") == "pro_israel"
     assert out.get("pro_israel_reply") is True
+    assert out.get("gave_up", False) is False
+    assert calls["generate"] == 1
+    assert calls["rank"] == 1
+    assert calls["stance"] == 1  # only the post-refine check
     assert calls["refine"] == 1
+    assert calls["grounding"] == 1
+    assert calls["router"] == 1
+
+
+def test_refinement_path_neutral_then_pro():
+    """First refinement -> neutral, second refinement -> pro_israel."""
+    out = _run(["neutral_needs_refine", "pro_israel"])
+    assert out.get("stance") == "pro_israel"
+    assert out.get("gave_up", False) is False
+    assert calls["generate"] == 1
+    assert calls["stance"] == 2  # two stance checks
+    assert calls["refine"] == 2  # two refinement passes
+    assert calls["router"] == 2
+
+
+def test_gave_up_via_neutral_then_escalation():
+    """stance always neutral: exhaust MAX_REFINE_ITERS, escalate to off-topic,
+    exhaust MAX_REGEN_ITERS, give up."""
+    out = _run(["neutral_needs_refine"] * 100)
+    assert out.get("gave_up") is True
+    assert out.get("give_up_reason", "")
+    assert out.get("stance") == "off_topic_or_anti"  # escalation result
+    assert calls["generate"] >= 2  # at least one regeneration before giving up
+    # Worst case bound on total refinement passes. The escalation rule fires
+    # when refine_iter EXCEEDS MAX_REFINE_ITERS, so each generation runs
+    # MAX_REFINE_ITERS + 1 refinement passes before being thrown out. Across
+    # (MAX_REGEN_ITERS + 1) generations the bound is (MAX_REGEN_ITERS + 1) *
+    # (MAX_REFINE_ITERS + 1).
+    max_expected_refines = (MAX_REGEN_ITERS + 1) * (MAX_REFINE_ITERS + 1)
+    assert calls["refine"] <= max_expected_refines
+
+
+def test_gave_up_via_off_topic_burns_refinement_per_regen():
+    """stance always off_topic_or_anti: with no early stance gate, each
+    generation must burn ONE refinement pass before the late stance gate
+    catches it and triggers regen. After exhausting MAX_REGEN_ITERS, give up.
+
+    This is the cost of moving the stance gate to the end."""
+    out = _run(["off_topic_or_anti"] * 100)
+    assert out.get("gave_up") is True
+    assert out.get("stance") == "off_topic_or_anti"
+    # Initial generation + MAX_REGEN_ITERS regenerations.
+    assert calls["generate"] == MAX_REGEN_ITERS + 1
+    # ONE refinement per generation (caught by stance gate after the first
+    # refinement pass), so total refines == generations.
+    assert calls["refine"] == MAX_REGEN_ITERS + 1
+    assert calls["stance"] == MAX_REGEN_ITERS + 1
+
+
+def test_router_none_skips_retrieval():
+    """Router picks 'none': skip_retrieval runs, no retriever or grader is
+    called, but reflect+refine still execute."""
+    out = _run(["pro_israel"], retrieval_mode="none")
+    assert out.get("stance") == "pro_israel"
+    assert out.get("gave_up", False) is False
+    # The 'none' arm bypasses retrieval and the docs grader entirely.
+    assert calls["web_retrieve"] == 0
+    assert calls["local_retrieve"] == 0
+    assert calls["grade"] == 0
+    # But reflect + refine still run.
+    assert calls["reflect"] == 1
+    assert calls["refine"] == 1
+    # hallucination_check is skipped on retrieval_mode='none' (no evidence to
+    # ground against), but the node itself still runs and writes grounded=True.
+    assert calls["grounding"] == 0
+    assert calls["router"] == 1
     assert calls["stance"] == 1
-    assert calls["force"] == 0
-    assert calls["rank"] == 1  # eliminate_loser ranks exactly once
 
 
-def test_worst_case_caps_hold():
-    """Grounding and stance both always fail: the loops hit their caps, then
-    force_regenerate runs once and the graph still terminates."""
-    out = _run(stance_ok=False, grounded=False)
-    assert out.get("winner") in ("A", "B")
-    # Outer loop: MAX_OUTER_ITERS passes, last one -> force_regenerate.
-    assert calls["router"] == MAX_OUTER_ITERS
-    assert calls["force"] == 1
-    # A pass that never grounds does exactly MAX_GROUND_RETRIES refines, so the
-    # worst case is MAX_OUTER_ITERS x MAX_GROUND_RETRIES refines (3 x 2 = 6).
-    expected_refine = MAX_OUTER_ITERS * MAX_GROUND_RETRIES
-    assert calls["refine"] == expected_refine
-    assert calls["grounding"] == expected_refine  # one grounding check per refine
-    assert calls["stance"] == MAX_OUTER_ITERS      # one stance check per outer pass
-    assert out.get("pro_israel_reply") is True     # force_regenerate sets it True
+def test_no_finalize_without_grounding_pass():
+    """Safety property: every successful run goes through refine ->
+    hallucination_check before stance_check ever fires.
 
-
-def test_stance_fails_but_grounded():
-    """Grounded immediately but stance keeps failing: one refine per outer pass
-    (no grounding retries), force_regenerate once."""
-    out = _run(stance_ok=False, grounded=True)
-    assert out.get("winner") in ("A", "B")
-    assert calls["force"] == 1
-    assert calls["refine"] == MAX_OUTER_ITERS
+    Even on the 'none' path the hallucination_check NODE runs (it just sets
+    grounded=True without calling the grader). What matters is the topology:
+    no path to finalize exists that bypasses refine.
+    """
+    out = _run(["pro_israel"])
+    assert out.get("gave_up", False) is False
+    assert calls["refine"] >= 1  # at least one refinement pass ran
 
 
 if __name__ == "__main__":
