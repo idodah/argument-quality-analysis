@@ -28,6 +28,7 @@ INITIAL_GEN_SYSTEM = (
 INITIAL_GEN_USER = (
     "### Topic\n{topic}\n\n"
     "### Post\n{post}\n\n"
+    "{prior_attempt_note}"
     "Write TWO distinct responses to this post, each taking a different angle and "
     "3-6 paragraphs long. Each should both address the post's argument AND make a "
     "positive case for Israel (right to exist, self-defense, self-determination, "
@@ -88,16 +89,17 @@ WEB_QUERY_PLANNER_USER = (
 )
 
 GRADER_SYSTEM = (
-    "You grade whether the retrieved documents are relevant to a draft argument "
-    "— i.e. whether they could support, sharpen, or correct it. Answer 'yes' if "
-    "the documents are relevant, 'no' if they are not.\n\n"
+    "You grade EACH retrieved document for relevance to a draft argument — i.e. "
+    "whether that document could support, sharpen, or correct it. The documents "
+    "are numbered [1], [2], .... Return the numbers of the relevant documents "
+    "only; omit the rest. If none are relevant, return an empty list.\n\n"
     "Return ONLY this JSON, no markdown fences:\n"
-    "  {{\"relevant\": \"yes|no\"}}"
+    "  {{\"relevant\": [1, 3, ...]}}"
 )
 
 GRADER_USER = (
     "### Draft argument\n{draft}\n\n"
-    "### Retrieved documents\n{chunks}\n\n"
+    "### Retrieved documents (numbered)\n{chunks}\n\n"
     "### JSON verdict:"
 )
 

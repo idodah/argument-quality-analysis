@@ -1,4 +1,4 @@
-"""Node: declare the surviving side the winner and report the final state.
+"""Node: package the final state and report warnings.
 
 Terminal/publishing node. No model call, no comparison — the A-vs-B decision
 happened in `eliminate_loser` and all gates (grounding, stance) ran upstream.
@@ -12,63 +12,68 @@ from agents.graph.state import GraphState, split_for_display
 
 
 def finalize(state: GraphState) -> GraphState:
-    """Publish the surviving side's argument and surface upstream warnings.
+    """Publish the current argument and surface upstream warnings.
 
-    The A-vs-B comparison happens once, on the initial drafts, in
-    `eliminate_loser`. By the time we reach this node only one side has been
-    iterating; its final arg_{side} is the answer. Grounding and pro-Israel
-    stance were already checked by their own nodes upstream — here we only
-    surface warnings and publish the result.
+    Single-argument design: by the time we reach this node, `state["argument"]`
+    holds the surviving draft after eliminate_loser + any refinement passes.
+    `state["winner"]` records which raw initial (A or B) was picked — kept for
+    traceability in `final_scores`, not for control flow.
 
     Output split: `generation` is the CLEAN argument (inline [n] markers and the
     '### Sources' footer removed) for display; `sources` is the list of URLs the
     model relied on, surfaced separately for human-in-the-loop verification. The
     raw cited draft is kept in `generation_raw` for debugging/traceability.
     """
-    side = state.get("active_side", "A")
-    winning_arg = state["arg_a"] if side == "A" else state["arg_b"]
-    clean_arg, sources = split_for_display(winning_arg)
-    iters = state.get(f"iter_{side.lower()}", 0)
+    winner = state.get("winner", "A")
+    final_argument = state.get("argument", "") or ""
+    clean_arg, sources = split_for_display(final_argument)
+    iters = state.get("iter", 0)
     grounded = state.get("grounded", True)
+    # Whether the final pass's grounding was verified by the grader or merely
+    # assumed (local/none retrieval had no factual evidence to check against).
+    grounding_verified = state.get("grounding_verified", False)
     issues = state.get("hallucination_issues", [])
     pro_israel = state.get("pro_israel_reply", True)
     stance = state.get("stance", "pro_israel")
     gave_up = state.get("gave_up", False)
     give_up_reason = state.get("give_up_reason", "")
 
-    print(f"[final] winner={side} iters={iters} grounded={grounded} stance={stance} sources={len(sources)}")
+    print(f"[finalize] winner={winner} iters={iters} grounded={grounded} "
+          f"(verified={grounding_verified}) stance={stance} sources={len(sources)}")
     if gave_up:
-        print(f"[final] GAVE UP: {give_up_reason}")
+        print(f"[finalize] GAVE UP: {give_up_reason}")
     if not grounded:
-        print(f"[final] WARNING: winning argument is NOT grounded — {len(issues)} unresolved issue(s):")
+        print(f"[finalize] WARNING: winning argument is NOT grounded — {len(issues)} unresolved issue(s):")
         for i, it in enumerate(issues, 1):
             print(f"  [issue {i}] {it}")
     if not pro_israel and not gave_up:
-        print(f"[final] WARNING: winning argument is NOT a pro-Israel reply — {state.get('stance_reason', '')}")
+        print(f"[finalize] WARNING: winning argument is NOT a pro-Israel reply — {state.get('stance_reason', '')}")
 
     _print_score_trajectory(state.get("history", []))
     return {
-        **state,
-        "winner": side,
+        "winner": winner,
         "generation": clean_arg,
-        "generation_raw": winning_arg,
+        "generation_raw": final_argument,
         "sources": sources,
         "pro_israel_reply": pro_israel,
         "stance": stance,
         "gave_up": gave_up,
         "give_up_reason": give_up_reason,
         "final_scores": {
-            "winner": side,
+            "winner": winner,
             "iters": iters,
             "winning_argument_length": len(clean_arg),
             "grounded": grounded,
+            # "grounded" above can mean verified OR assumed; this disambiguates.
+            "grounding_verified": grounding_verified,
             "hallucination_issues": issues,
             "pro_israel_reply": pro_israel,
             "stance": stance,
             "stance_reason": state.get("stance_reason", ""),
             "gave_up": gave_up,
             "give_up_reason": give_up_reason,
-            "regen_iter": state.get("regen_iter", 0),
+            "early_regen_iter": state.get("early_regen_iter", 0),
+            "late_regen_iter": state.get("late_regen_iter", 0),
             "refine_iter": state.get("refine_iter", 0),
             "num_sources": len(sources),
         },
@@ -89,7 +94,11 @@ def _print_score_trajectory(history: list[dict]) -> None:
             print(f"  [grounding refine_pass={h.get('refine_iter')} retries={h.get('ground_retries')}] "
                   f"grounded={h.get('grounded')}")
         elif stage == "stance_check":
-            print(f"  [stance refine_pass={h.get('refine_iter')} regen={h.get('regen_iter')}] "
+            print(f"  [stance refine_pass={h.get('refine_iter')} late_regen={h.get('late_regen_iter')}] "
                   f"stance={h.get('stance')}")
+        elif stage == "early_stance_check":
+            print(f"  [early_stance early_regen={h.get('early_regen_iter', 0)}] "
+                  f"action={h.get('action')} stance={h.get('stance')}")
         elif stage == "generate_initial":
-            print(f"  [regen pass={h.get('regen_iter')}] reason={h.get('regen_reason')}")
+            print(f"  [regen early={h.get('early_regen_iter', 0)} late={h.get('late_regen_iter', 0)}] "
+                  f"reason={h.get('regen_reason')}")

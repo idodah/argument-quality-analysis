@@ -18,9 +18,8 @@ def generate_pro_israel_response(title: str, body: str) -> dict:
     from agents.graph.builder import run_refinement
 
     out = run_refinement(topic=title, original_post=body)
-    winner = out["winner"]
     return {
-        "generation": out.get("generation") or out[f"arg_{winner.lower()}"],
+        "generation": out.get("generation") or out.get("argument", ""),
         "sources": out.get("sources", []),
         "grounded": bool(out.get("grounded", True)),
         "pro_israel_reply": bool(out.get("pro_israel_reply", True)),

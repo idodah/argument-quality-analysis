@@ -1,9 +1,13 @@
 """LangGraph wiring: builds the merged self-RAG refinement graph.
 
 Flow:
-  generate_initial  -> two distinct pro-Israel drafts
-  eliminate_loser   -> Qwen pairwise compare (once per generation)
-  router            -> local | web | none retrieval (LLM-decided)
+  generate_initial    -> two distinct pro-Israel drafts
+  eliminate_loser     -> Qwen pairwise compare (once per generation)
+  early_stance_check  -> cheap stance gate on the RAW survivor: off-topic /
+                         anti-Israel survivors regenerate immediately (no
+                         refinement pass wasted); on-topic survivors fall
+                         through to the router.
+  router              -> local | web | none retrieval (LLM-decided)
   retrieve_*        -> arm-specific retrieval (skipped on 'none')
   grade_docs        -> binary relevance; if irrelevant, web_search (Tavily) first
   reflect           -> critique (missing / superfluous vs the original post)
@@ -15,22 +19,36 @@ Flow:
   stance_check      -> classify the refined survivor:
        pro_israel           -> finalize -> END
        neutral_needs_refine -> router (refinement loop, MAX_REFINE_ITERS)
-       off_topic_or_anti    -> generate_initial (regeneration loop, MAX_REGEN_ITERS)
+       off_topic_or_anti    -> generate_initial (late regen loop, MAX_LATE_REGEN_ITERS)
        gave_up              -> finalize -> END
 
-Three independent caps:
+Four caps (all per the generation/pass they scope, reset by the enclosing loop):
   - MAX_REFINE_ITERS  (stance_check -> router per generation, reset on regen)
-  - MAX_REGEN_ITERS   (stance_check -> generate_initial across the whole run)
+  - MAX_EARLY_REGEN_ITERS (early_stance_check -> generate_initial, per generation,
+                           reset by the late gate on each fresh generation)
+  - MAX_LATE_REGEN_ITERS  (stance_check -> generate_initial, persists whole run)
   - MAX_GROUND_RETRIES (hallucination_check -> refine per refinement pass)
 
-When both REFINE and REGEN budgets are spent, stance_check sets gave_up=True
-and routes to finalize, which reports the give-up honestly rather than
-shipping a non-pro-Israel argument as the answer.
+When the LATE regen budget is spent, the LATE stance_check sets gave_up=True
+and routes to finalize, which reports the give-up honestly rather than shipping
+a non-pro-Israel argument as the answer. The early gate has its OWN per-generation
+regen budget (MAX_EARLY_REGEN_ITERS) and never decides give-up itself — once
+its budget is spent for the current generation it just stops short-circuiting
+and hands the draft to the refinement path. The late gate resets the early
+budget on each fresh generation, so the two regen loops compose multiplicatively
+(up to (1 + MAX_LATE_REGEN_ITERS) generations × MAX_EARLY_REGEN_ITERS early
+regenerations each).
 
-The stance gate fires only AFTER refinement: every shipped argument has
-passed through hallucination_check. Trade-off: an off-topic initial draft
-must burn one full refinement loop before the stance gate catches it and
-triggers regeneration.
+Two stance gates, complementary:
+  - early_stance_check (before refinement) catches ONLY off-topic / anti-Israel
+    survivors and regenerates immediately (while regen budget lasts), so a
+    hopeless draft no longer burns a full refinement loop first. It has just two
+    out-edges (generate_initial | router) and never routes to finalize: once the
+    regen budget is spent it hands the draft to the router so the late gate is
+    always reached (bounded termination).
+  - stance_check (after refinement) is the SOLE authority on shipping and on
+    give-up: every argument that reaches finalize via the late gate has passed
+    through hallucination_check, so the grounding invariant is preserved.
 
 Qwen is used only at eliminate_loser (no per-iteration ranking).
 """
@@ -42,6 +60,8 @@ import argparse
 from langgraph.graph import END, StateGraph
 
 from agents.graph.nodes import (
+    early_stance_check,
+    early_stance_router,
     eliminate_loser,
     finalize,
     generate_initial,
@@ -68,6 +88,7 @@ def build_graph():
 
     g.add_node("generate_initial", generate_initial)
     g.add_node("eliminate_loser", eliminate_loser)
+    g.add_node("early_stance_check", early_stance_check)
     g.add_node("router", router)
     g.add_node("retrieve_local", retrieve_local)
     g.add_node("retrieve_web", retrieve_web)
@@ -82,11 +103,21 @@ def build_graph():
 
     g.set_entry_point("generate_initial")
     g.add_edge("generate_initial", "eliminate_loser")
-    # Single stance gate, at the END (after at least one refinement pass).
-    # Trade-off: an off-topic initial draft burns one refinement loop before
-    # being caught, but every path to finalize is guaranteed to have
-    # passed through hallucination_check.
-    g.add_edge("eliminate_loser", "router")
+    # Cheap pre-refinement stance gate on the raw survivor. It catches ONLY the
+    # off-topic / anti-Israel case (which a refinement pass cannot rescue) and
+    # regenerates immediately, instead of burning a full router -> retrieve ->
+    # reflect -> refine -> ground cycle first. On-topic survivors fall through to
+    # the router, so the late stance_check remains the authority on shipping and
+    # every shipped argument still passes through the grounding pass.
+    g.add_edge("eliminate_loser", "early_stance_check")
+    g.add_conditional_edges(
+        "early_stance_check",
+        early_stance_router,
+        {
+            "generate_initial": "generate_initial",
+            "router": "router",
+        },
+    )
 
     # Router -> retrieval arm (local, web, or none-skip).
     g.add_conditional_edges(
@@ -164,9 +195,9 @@ def _main() -> None:
     args = parser.parse_args()
 
     out = run_refinement(topic=args.topic, original_post=args.post)
-    winner = out["winner"]
-    winning_arg = out["arg_a"] if winner == "A" else out["arg_b"]
-    iters = out.get(f"iter_{winner.lower()}", 0)
+    winner = out.get("winner", "?")
+    winning_arg = out.get("generation") or out.get("argument", "")
+    iters = out.get("iter", 0)
     print("\n========== FINAL ==========")
     print(f"Winner: {winner} (iters={iters})")
     print(f"Final scores: {out.get('final_scores')}")

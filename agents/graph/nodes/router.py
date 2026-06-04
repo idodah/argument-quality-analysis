@@ -13,11 +13,12 @@ from __future__ import annotations
 import os
 
 from agents.graph.chains.router import route_retrieval
-from agents.graph.state import GraphState, active_view
+from agents.graph.state import GraphState, current_argument
 
 
 def router(state: GraphState) -> GraphState:
-    side, current, _prev, critique = active_view(state)
+    current = current_argument(state)
+    critique = state.get("critique", "")
     mode, queries = route_retrieval(state["original_post"], current, critique)
 
     forced = os.environ.get("FORCE_RETRIEVAL_MODE", "").lower().strip()
@@ -37,9 +38,8 @@ def router(state: GraphState) -> GraphState:
     regen = state.get("regen_reason") or ""
     if regen:
         print(f"[router] refine pass {state.get('refine_iter', 0)}: stance fix (reason: {regen})")
-    print(f"[router] side={side} refine_iter={state.get('refine_iter', 0)} -> {mode} (queries={len(queries)})")
+    print(f"[router] refine_iter={state.get('refine_iter', 0)} -> {mode} (queries={len(queries)})")
     return {
-        **state,
         "retrieval_mode": mode,
         "web_queries": queries,
         "ground_retries": 0,
