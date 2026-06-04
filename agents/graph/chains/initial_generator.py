@@ -22,9 +22,23 @@ def _parse_two_responses(text: str) -> tuple[str, str]:
     return arg_a, arg_b
 
 
-def generate_initial_pair(topic: str, post: str) -> tuple[str, str]:
-    """Draft two distinct pro-Israel responses to `post`."""
+def generate_initial_pair(topic: str, post: str, regen_reason: str = "") -> tuple[str, str]:
+    """Draft two distinct pro-Israel responses to `post`.
+
+    On regeneration, the previous attempt's failure reason is folded into the
+    prompt so the new draft is informed rather than blind — the model knows
+    what specifically the prior draft got wrong (e.g. "stayed neutral, didn't
+    advocate" or "went off-topic onto unrelated points").
+    """
+    if regen_reason:
+        prior_note = (
+            "### IMPORTANT: Prior attempts on this post failed for this reason:\n"
+            f"  {regen_reason}\n"
+            "Avoid that failure mode in BOTH of the two new responses below.\n\n"
+        )
+    else:
+        prior_note = ""
     llm = creative_llm()
-    user = prompts.INITIAL_GEN_USER.format(topic=topic, post=post)
+    user = prompts.INITIAL_GEN_USER.format(topic=topic, post=post, prior_attempt_note=prior_note)
     text = chat(llm, prompts.INITIAL_GEN_SYSTEM, user)
     return _parse_two_responses(text)

@@ -10,20 +10,23 @@ Grades the retrieved documents yes/no:
 from __future__ import annotations
 
 from agents.graph.chains.doc_grader import grade_docs_relevant
-from agents.graph.state import GraphState, active_view
+from agents.graph.state import GraphState, current_argument
 
 
 def grade_docs(state: GraphState) -> GraphState:
-    _side, current, _prev, _crit = active_view(state)
-    chunks = state.get("retrieved", []) or []
+    current = current_argument(state)
+    chunks = state.get("documents", []) or []
     if not chunks:
         print("[grade_docs] no documents -> web_search=True")
-        return {**state, "retrieved": [], "documents": [], "web_search": True}
+        return {"documents": [], "web_search": True}
 
-    relevant = grade_docs_relevant(current, chunks)
-    if relevant:
-        print(f"[grade_docs] relevant=True -> keep {len(chunks)} docs")
-        return {**state, "retrieved": chunks, "documents": chunks, "web_search": False}
+    # Per-chunk relevance (canonical Self-RAG): keep the chunks that pass and
+    # drop only the rest, instead of collapsing the whole pool to one verdict.
+    kept = grade_docs_relevant(current, chunks)
+    if kept:
+        print(f"[grade_docs] kept {len(kept)}/{len(chunks)} relevant docs")
+        return {"documents": kept, "web_search": False}
 
-    print(f"[grade_docs] relevant=False -> drop {len(chunks)} docs, web_search=True")
-    return {**state, "retrieved": [], "documents": [], "web_search": True}
+    # No chunk survived: drop everything and fall back to a web search.
+    print(f"[grade_docs] 0/{len(chunks)} relevant -> drop all, web_search=True")
+    return {"documents": [], "web_search": True}

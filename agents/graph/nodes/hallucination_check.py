@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 
 from agents.graph.chains.hallucination_grader import check_grounding
-from agents.graph.state import GraphState
+from agents.graph.state import GraphState, current_argument
 
 _MARKER_RE = re.compile(r"\[\d+\]")
 
@@ -35,8 +35,7 @@ def _is_citation_shaped(issue: str) -> bool:
 
 
 def hallucination_check(state: GraphState) -> GraphState:
-    side = state["active_side"]
-    draft = state["arg_a"] if side == "A" else state["arg_b"]
+    draft = current_argument(state)
     history = state.get("history", [])
     pass_n = state.get("refine_iter", 0)
 
@@ -44,12 +43,17 @@ def hallucination_check(state: GraphState) -> GraphState:
     # 'none' retrieval: no fresh factual evidence to ground against this pass.
     mode = state.get("retrieval_mode")
     if mode in ("local", "none"):
-        print(f"[hallucination_check] side={side} grounded=True ({mode} retrieval skipped)")
-        history = history + [{"side": side, "refine_iter": pass_n, "stage": "hallucination_check",
-                              "grounded": True, "skipped": f"{mode}_retrieval"}]
-        return {**state, "grounded": True, "hallucination_issues": [], "history": history}
+        print(f"[hallucination_check] grounded=True ({mode} retrieval skipped — ASSUMED, not verified)")
+        history = history + [{"refine_iter": pass_n, "stage": "hallucination_check",
+                              "grounded": True, "grounding_verified": False, "skipped": f"{mode}_retrieval"}]
+        # grounding_verified=False: 'grounded' here means "assumed grounded
+        # because there was no factual evidence to check against", NOT "the
+        # grader confirmed it". Downstream (finalize/final_scores) keeps the two
+        # apart so an analysis can tell a verified pass from a skipped one.
+        return {"grounded": True, "grounding_verified": False,
+                "hallucination_issues": [], "history": history}
 
-    evidence = state.get("documents", []) or state.get("retrieved", []) or []
+    evidence = state.get("documents", []) or []
     verdict = check_grounding(draft, evidence)
     issues = verdict.get("issues", [])
 
@@ -61,13 +65,16 @@ def hallucination_check(state: GraphState) -> GraphState:
     # outer pass), so route_after_hallucination can cap the grounding loop.
     ground_retries = state.get("ground_retries", 0) + (0 if grounded else 1)
 
-    print(f"[hallucination_check] side={side} grounded={grounded} "
+    print(f"[hallucination_check] grounded={grounded} "
           f"(fact_issues={len(fact_issues)}, citation_issues={len(issues) - len(fact_issues)}, "
           f"ground_retries={ground_retries})")
     for i, issue in enumerate(fact_issues, 1):
         print(f"  [fact issue {i}] {issue}")
 
-    history = history + [{"side": side, "refine_iter": pass_n, "stage": "hallucination_check",
-                          "grounded": grounded, "issues": fact_issues, "ground_retries": ground_retries}]
-    return {**state, "grounded": grounded, "hallucination_issues": fact_issues,
+    history = history + [{"refine_iter": pass_n, "stage": "hallucination_check",
+                          "grounded": grounded, "grounding_verified": True,
+                          "issues": fact_issues, "ground_retries": ground_retries}]
+    # grounding_verified=True: the grader actually ran against retrieved evidence.
+    return {"grounded": grounded, "grounding_verified": True,
+            "hallucination_issues": fact_issues,
             "ground_retries": ground_retries, "history": history}

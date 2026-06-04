@@ -5,6 +5,7 @@ They own the bookkeeping (iter counters, history, convergence flags); chains
 stay pure.
 """
 
+from agents.graph.nodes.early_stance_check import early_stance_check, early_stance_router
 from agents.graph.nodes.eliminate_loser import eliminate_loser
 from agents.graph.nodes.finalize import finalize
 from agents.graph.nodes.generate_initial import generate_initial
@@ -23,6 +24,8 @@ from agents.graph.nodes.routing import (
 from agents.graph.nodes.stance_check import stance_check
 
 __all__ = [
+    "early_stance_check",
+    "early_stance_router",
     "eliminate_loser",
     "finalize",
     "generate_initial",
