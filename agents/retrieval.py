@@ -19,6 +19,16 @@ CHROMA_DIR = Path(__file__).resolve().parent.parent / ".chroma"
 COLLECTION_NAME = "pro_israel_corpus"
 
 
+def _doc_count(store) -> int:
+    """Number of documents in a langchain-chroma store, via the public API.
+
+    `store.get(include=[])` returns only the ids (no embeddings/documents
+    payload), so this is a cheap count that doesn't poke at the private
+    `_collection` attribute.
+    """
+    return len(store.get(include=[]).get("ids", []))
+
+
 class LocalRetriever:
     """Chroma-backed local corpus. Returns empty results until the `rag/`
     ingestion scripts have populated the `pro_israel_corpus` collection."""
@@ -34,7 +44,7 @@ class LocalRetriever:
             embedding_function=self.embeddings,
             persist_directory=str(CHROMA_DIR),
         )
-        if self.store._collection.count() == 0:
+        if _doc_count(self.store) == 0:
             print(
                 "[LocalRetriever] pro_israel_corpus is empty; local arm will return "
                 "no results. Populate it with `uv run python -m rag.ingest_rag` "
@@ -42,7 +52,7 @@ class LocalRetriever:
             )
 
     def retrieve(self, query: str, k: int | None = None, where: dict | None = None) -> list[str]:
-        if self.store._collection.count() == 0:
+        if _doc_count(self.store) == 0:
             return []
         results = self.store.similarity_search(query, k=k or self.k, filter=where)
         return [self._format(d) for d in results]

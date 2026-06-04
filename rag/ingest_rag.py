@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
-from agents.retrieval import CHROMA_DIR, COLLECTION_NAME
+from agents.retrieval import CHROMA_DIR, COLLECTION_NAME, _doc_count
 
 INPUT_PARQUET = Path("data/cmv_israel_rag_pro.parquet")
 POST_EXCERPT_CHARS = 1200
@@ -52,7 +52,7 @@ def main(reset: bool = False) -> None:
     )
 
     if reset:
-        existing = store._collection.count()
+        existing = _doc_count(store)
         if existing:
             store.delete_collection()
             print(f"Reset: dropped {existing} existing documents from '{COLLECTION_NAME}'.")
@@ -86,7 +86,7 @@ def main(reset: bool = False) -> None:
     # idempotent: same comment_id -> same id, so re-running upserts rather than duplicates
     store.add_documents(docs, ids=ids)
     print(f"Ingested {len(docs)} documents into '{COLLECTION_NAME}' at {CHROMA_DIR}.")
-    print(f"Collection now holds {store._collection.count()} documents.")
+    print(f"Collection now holds {_doc_count(store)} documents.")
 
 
 if __name__ == "__main__":
