@@ -17,7 +17,8 @@
       "Read(./**)",
       "WebFetch(domain:github.com)",
       "WebSearch",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(uv run *)"
     ],
     "deny": [
       "Read(./.env)",
