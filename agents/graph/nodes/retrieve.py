@@ -15,8 +15,8 @@ from agents.retrieval import LocalRetriever, WebRetriever
 
 # Retriever instances are created lazily and cached here, but the constructors
 # are exposed as module-level hooks (`make_local` / `make_web`) so tests and
-# alternate configs can swap them without touching the node bodies. Reset the
-# caches by calling reset_retrievers() (used by the offline tests).
+# alternate configs can swap them without touching the node bodies. The offline
+# tests reset the caches by patching `_LOCAL` / `_WEB` back to None.
 _LOCAL: LocalRetriever | None = None
 _WEB: WebRetriever | None = None
 
@@ -29,13 +29,6 @@ def make_local() -> LocalRetriever:
 def make_web() -> WebRetriever:
     """Factory for the web retriever. Override in tests to inject a fake."""
     return WebRetriever(k=WEB_K, allowed_domains=WEB_ALLOWED_DOMAINS)
-
-
-def reset_retrievers() -> None:
-    """Drop the cached retriever instances (forces re-creation via the factories)."""
-    global _LOCAL, _WEB
-    _LOCAL = None
-    _WEB = None
 
 
 def _local() -> LocalRetriever:

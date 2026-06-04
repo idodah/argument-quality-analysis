@@ -62,6 +62,3 @@ class PairTfidf:
         arg_b = self._arg_vec.transform(fields["arg_b"])
         arg_diff = arg_a - arg_b  # antisymmetric: swap A<->B -> negation
         return hstack(context + [arg_diff]).tocsr()
-
-    def fit_transform(self, train_fields: dict) -> csr_matrix:
-        return self.fit(train_fields).transform(train_fields)
