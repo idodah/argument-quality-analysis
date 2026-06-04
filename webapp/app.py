@@ -10,6 +10,8 @@ access is needed: the user pastes the post text directly.
 
 from __future__ import annotations
 
+import traceback
+
 import gradio as gr
 from dotenv import load_dotenv
 
@@ -44,6 +46,9 @@ def respond(topic: str, post: str):
     try:
         result = generate_pro_israel_response(title=topic, body=post)
     except Exception as e:  # surface failures in the UI rather than a blank box
+        # Show a clean one-liner in the UI, but log the full traceback to the
+        # server console so a real bug isn't reduced to a single line.
+        traceback.print_exc()
         return "", f"Generation failed: {type(e).__name__}: {e}", ""
 
     flags = []
