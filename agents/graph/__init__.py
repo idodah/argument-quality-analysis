@@ -1,6 +1,7 @@
-"""Refinement LangGraph: chains + nodes + builder."""
+"""Refinement LangGraph: chains + nodes + builder.
 
-from agents.graph.builder import build_graph, run_refinement
-from agents.graph.state import GraphState
-
-__all__ = ["build_graph", "run_refinement", "GraphState"]
+``build_graph`` / ``run_refinement`` live in ``agents.graph.builder`` and
+``GraphState`` in ``agents.graph.state``; import them from those modules
+directly. Nothing is re-exported here so that importing the ``agents.graph``
+package doesn't eagerly compile the builder.
+"""
