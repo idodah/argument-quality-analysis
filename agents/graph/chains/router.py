@@ -20,15 +20,30 @@ _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 _VALID_MODES: set[RetrievalMode] = {"local", "web", "none"}
 
 
+def _parse_json_obj(text: str) -> dict | None:
+    """Extract the first JSON object from `text`, or None if absent/malformed."""
+    match = _JSON_OBJ_RE.search(text)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def _clean_queries(obj: dict, n: int) -> list[str]:
+    """Pull `obj["queries"]` as up to `n` non-blank strings (in order)."""
+    raw = obj.get("queries") or []
+    if not isinstance(raw, list):
+        return []
+    return [str(q).strip() for q in raw if str(q).strip()][:n]
+
+
 def _parse_decision(text: str, n: int) -> tuple[RetrievalMode, list[str]]:
     # Default to 'local': the curated corpus is always available, so it is the
     # safe fallback when the router output is missing or unparseable.
-    match = _JSON_OBJ_RE.search(text)
-    if not match:
-        return "local", []
-    try:
-        obj = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    obj = _parse_json_obj(text)
+    if obj is None:
         return "local", []
     raw_mode = str(obj.get("mode", "")).lower().strip()
     if raw_mode.startswith("web"):
@@ -37,13 +52,9 @@ def _parse_decision(text: str, n: int) -> tuple[RetrievalMode, list[str]]:
         mode = "none"
     else:
         mode = "local"
-    raw_queries = obj.get("queries") or []
-    if not isinstance(raw_queries, list):
-        raw_queries = []
-    queries = [str(q).strip() for q in raw_queries if str(q).strip()]
-    if mode != "web":
-        queries = []
-    return mode, queries[:n]
+    # Queries are only meaningful for the web arm.
+    queries = _clean_queries(obj, n) if mode == "web" else []
+    return mode, queries
 
 
 def route_retrieval(post: str, draft: str, critique: str = "") -> tuple[RetrievalMode, list[str]]:
@@ -58,17 +69,10 @@ def route_retrieval(post: str, draft: str, critique: str = "") -> tuple[Retrieva
 
 
 def _parse_queries(text: str, n: int) -> list[str]:
-    match = _JSON_OBJ_RE.search(text)
-    if not match:
+    obj = _parse_json_obj(text)
+    if obj is None:
         return []
-    try:
-        obj = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return []
-    raw = obj.get("queries") or []
-    if not isinstance(raw, list):
-        return []
-    return [str(q).strip() for q in raw if str(q).strip()][:n]
+    return _clean_queries(obj, n)
 
 
 def plan_web_queries(post: str, draft: str, critique: str = "") -> list[str]:
