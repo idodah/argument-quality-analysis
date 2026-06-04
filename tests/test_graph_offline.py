@@ -23,10 +23,12 @@ Scenarios:
      off_topic_or_anti; the EARLY gate regenerates while the budget lasts, then
      (budget spent) hands off to the router so exactly ONE refinement pass runs
      and the LATE gate records give-up. Early gate never finalizes.
-  5. router_none_skips_retrieval: when router picks 'none', the graph runs
+  5. early_stance_check_has_no_finalize_edge: topology guard; the early gate's
+     only out-edges are generate_initial and router (never finalize).
+  6. router_none_skips_retrieval: when router picks 'none', the graph runs
      skip_retrieval -> reflect -> refine -> hallucination_check (skipped) ->
      stance_check, without calling any retriever or the docs grader.
-  6. no_finalize_without_grounding_pass: safety property; every successful
+  7. no_finalize_without_grounding_pass: safety property; every successful
      run has at least one grounding check.
 
 Run: `uv run pytest tests/test_graph_offline.py`
