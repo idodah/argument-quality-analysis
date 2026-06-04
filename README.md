@@ -100,6 +100,16 @@ are not near-duplicates of each other.
 uv run python -m preprocessing.filter_by_similarity
 ```
 
+A final token-length filter drops pairs whose arguments fall outside
+`[MIN_TOKENS, MAX_TOKENS]` (per the ranker's tokenizer), caps the original-post
+length, and enforces a max delta/nodelta length ratio so neither baseline nor
+ranker can exploit raw length. This produces the `filtered_v2` split the models
+train on.
+
+```bash
+uv run python -m preprocessing.filter_by_tokens
+```
+
 For the Israel-focused RAG corpus, the `rag/` package scrapes CMV threads via
 arctic-shift, classifies each argument's stance, and ingests the high-confidence
 pro-Israel arguments (plus a few legal primary sources) into Chroma:
@@ -152,7 +162,7 @@ uv run python -m models.qwen
 
 The `agents` package wires a LangGraph workflow that drafts two candidate
 arguments, eliminates the weaker one up front on the Qwen ranker, then refines
-the survivor against retrieved evidence. Refinement is governed by three
+the survivor against retrieved evidence. Refinement is governed by four
 independent loops, each with its own cap:
 
 - **Grounding loop** (`hallucination_check -> refine`): re-refines while the
@@ -161,10 +171,13 @@ independent loops, each with its own cap:
 - **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
   not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
   up to `MAX_REFINE_ITERS` passes per generation.
-- **Regeneration loop** (`stance_check`/`early_stance_check ->
+- **Regeneration loops** (`stance_check`/`early_stance_check ->
   generate_initial`): if the draft is off-topic or anti-Israel, both drafts are
-  thrown out and regenerated, up to `MAX_REGEN_ITERS` times (each regeneration
-  resets the refinement counter). When both budgets are spent the late
+  thrown out and regenerated. The early gate regenerates up to
+  `MAX_EARLY_REGEN_ITERS` times **per generation** (its budget reset on each
+  fresh generation); the late gate regenerates up to `MAX_LATE_REGEN_ITERS`
+  times across the whole run (each regeneration resets the refinement counter).
+  When both the refinement and late-regeneration budgets are spent the late
   `stance_check` records `gave_up=True` and reports it honestly rather than
   shipping a non-pro-Israel argument. (The early gate only regenerates; it never
   decides give-up.)
@@ -215,15 +228,20 @@ Four patterns are fused into the graph:
   out-edges (`generate_initial` | `router`) and never routes to `finalize`:
   once the regen budget is spent it hands the draft to the router so the late
   `stance_check` is always reached. Give-up is decided solely by the late gate.
-- **router** — Adaptive-RAG: picks `local` or `web` for the active side this
-  pass; when it picks `web`, the same call also plans the search queries that
-  target the critique's evidence gaps. It also resets the grounding-retry
-  budget and clears any stale grounding verdict at the start of each pass. (Set
-  `FORCE_RETRIEVAL_MODE={local|web}` in the env to pin the route for debugging.)
+- **router** — Adaptive-RAG: picks `local`, `web`, or `none` (skip retrieval —
+  the current draft is strong enough to refine without new evidence) for the
+  active side this pass; when it picks `web`, the same call also plans the
+  search queries that target the critique's evidence gaps. It also resets the
+  grounding-retry budget and clears any stale grounding verdict at the start of
+  each pass. (Set `FORCE_RETRIEVAL_MODE={local|web}` in the env to pin the route
+  for debugging.)
 - **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
+- **skip_retrieval** — the router's `none` arm: adds no new documents and
+  preserves the existing pool, so refinement still runs (and can cite
+  previously-grounded facts) without fetching fresh evidence this pass.
 - **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
   subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
   and `web_search=True` routes to the web-search fallback first.
