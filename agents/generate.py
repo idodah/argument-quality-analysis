@@ -24,5 +24,8 @@ def generate_pro_israel_response(title: str, body: str) -> dict:
         "sources": out.get("sources", []),
         "grounded": bool(out.get("grounded", True)),
         "pro_israel_reply": bool(out.get("pro_israel_reply", True)),
+        "stance": out.get("stance", "pro_israel"),
+        "gave_up": bool(out.get("gave_up", False)),
+        "give_up_reason": out.get("give_up_reason", ""),
         "final_scores": out.get("final_scores"),
     }

@@ -5,6 +5,12 @@ fine-tuned Qwen ranker, keeps the winner as the active side, and marks the
 other side converged so the rest of the graph never touches it. This moves
 the only A-vs-B decision to the moment when both arguments are at the same
 level of polish (raw initial), which is the fair comparison.
+
+The ranker only decides which of the two drafts is *better* — it does not
+verify that the winner is actually pro-Israel. That job belongs to
+`stance_check` downstream: if the chosen survivor is off-topic or anti-Israel,
+stance_check will trigger a regeneration (and both drafts get replaced). So
+the stance gate effectively overrides the ranker on bad initial pairs.
 """
 
 from __future__ import annotations

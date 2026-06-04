@@ -6,12 +6,18 @@ import re
 from typing import Literal, TypedDict
 
 # Iteration caps for the three independent loops:
-#   - outer/stance loop  (stance_check -> router): up to MAX_OUTER_ITERS passes
-#   - grounding loop      (hallucination_check -> refine): up to MAX_GROUND_RETRIES
-#     per outer pass (reset each pass), so worst case is OUTER x GROUND grounding
-#     refines (3 x 2 = 6).
-MAX_OUTER_ITERS = 3  # max router passes triggered by a failed stance check
-MAX_GROUND_RETRIES = 2  # max grounding re-refines per outer pass
+#   - refinement loop (stance_check -> router): up to MAX_REFINE_ITERS passes,
+#     triggered when the argument is on-topic but doesn't yet make a pro-Israel
+#     case.
+#   - regeneration loop (stance_check -> generate_initial): up to MAX_REGEN_ITERS
+#     fresh starts, triggered when the argument is off-topic OR explicitly
+#     anti-Israel. Each regeneration resets the refinement counter, so worst case
+#     is (MAX_REGEN_ITERS + 1) generations x MAX_REFINE_ITERS refinements.
+#   - grounding loop (hallucination_check -> refine): up to MAX_GROUND_RETRIES
+#     per refinement pass.
+MAX_REFINE_ITERS = 5  # max stance_check -> router passes per generation attempt
+MAX_REGEN_ITERS = 2   # max stance_check -> generate_initial restarts
+MAX_GROUND_RETRIES = 2  # max grounding re-refines per refinement pass
 LOCAL_K = 4
 WEB_K = 5  # Tavily max_results per web query
 WEB_QUERIES = 3  # number of search queries the web-query planner generates per iteration (router may pick 3-5 terms)
@@ -22,10 +28,10 @@ WEB_QUERIES = 3  # number of search queries the web-query planner generates per 
 # is gated by a strict no-concession stance check; when the web arm retrieved
 # from critical-leaning outlets (Guardian, HRW, Amnesty, OHCHR, UN, UNRWA...),
 # grounded drafts kept importing those sources' fault-framing of Israeli conduct
-# and failing the stance gate, so EVERY post fell through to the values-only
-# force_regenerate fallback (no citations). Restricting retrieval to pro-Israel,
-# Israeli-official, and Jewish-advocacy sources lets the evidence-based path
-# produce grounded, CITED drafts that can actually pass the gate.
+# and failing the stance gate, exhausting both budgets and giving up on every
+# post. Restricting retrieval to pro-Israel, Israeli-official, and
+# Jewish-advocacy sources lets the evidence-based path produce grounded, CITED
+# drafts that can actually pass the gate.
 #
 # Trade-off: evidence is one-sided by design and citations point to advocacy
 # outlets — appropriate here (the goal is a pro-Israel argument, not a neutral
@@ -58,7 +64,8 @@ WEB_ALLOWED_DOMAINS = [
 ]
 
 Side = Literal["A", "B"]
-RetrievalMode = Literal["local", "web"]
+RetrievalMode = Literal["local", "web", "none"]
+Stance = Literal["pro_israel", "neutral_needs_refine", "off_topic_or_anti"]
 
 
 class GraphState(TypedDict, total=False):
@@ -89,11 +96,13 @@ class GraphState(TypedDict, total=False):
     grounded: bool
     hallucination_issues: list[str]
 
-    # Independent loop counters (see MAX_OUTER_ITERS / MAX_GROUND_RETRIES).
-    outer_iter: int       # router passes caused by a failed stance check
-    ground_retries: int   # grounding re-refines within the current outer pass
-    # Set when a stance failure sends us back to the router, telling refine the
-    # next revision exists to make the argument clearly pro-Israel.
+    # Independent loop counters (see MAX_REFINE_ITERS / MAX_REGEN_ITERS /
+    # MAX_GROUND_RETRIES). refine_iter resets each regeneration.
+    refine_iter: int      # stance_check -> router refinement passes
+    regen_iter: int       # stance_check -> generate_initial restarts (across whole run)
+    ground_retries: int   # grounding re-refines within the current refinement pass
+    # Set when a stance failure sends us back to the router (or to
+    # generate_initial), telling the next pass why the previous attempt failed.
     regen_reason: str
 
     # New single-argument view (the merged self-RAG graph). After
@@ -109,14 +118,16 @@ class GraphState(TypedDict, total=False):
 
     history: list[dict]
     winner: Literal["A", "B"]
+    # Ternary stance + the legacy boolean (kept for run.py / tests / external
+    # consumers that read pro_israel_reply directly). pro_israel_reply is just
+    # `stance == "pro_israel"`.
+    stance: Stance
     pro_israel_reply: bool
     stance_reason: str
-    # Traceability for the terminal force_regenerate pass: the strict-gate verdict
-    # on the forced rewrite, recorded even though it no longer gates the output
-    # (the rewrite is terminal-accepted). Lets a human reviewer see whether the
-    # gate still objected and why.
-    force_stance_pass: bool
-    force_stance_reason: str
+    # Set when both budgets are exhausted and the pipeline gives up rather than
+    # ship a non-pro-Israel argument as if it were one.
+    gave_up: bool
+    give_up_reason: str
     final_scores: dict
 
 
