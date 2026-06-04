@@ -4,25 +4,31 @@ late stance gate.
 Drives the REAL compiled graph (agents.graph.builder.build_graph) with every
 LLM / retrieval / Qwen boundary stubbed, so no API keys or network are needed.
 
-The stance gate runs ONCE per refinement pass, at the end (after
-hallucination_check). Every path to finalize goes through
-refine -> hallucination_check, so the grounding pass is guaranteed by
-construction.
+There are TWO stance gates: an EARLY one on the raw survivor (before
+refinement, catches only off_topic_or_anti and regenerates while the regen
+budget lasts) and the LATE one after hallucination_check (the SOLE authority on
+shipping and give-up). The early gate has only two out-edges
+(generate_initial | router) and never routes to finalize. Every path to
+finalize goes through refine -> hallucination_check -> late stance_check, so the
+grounding pass is guaranteed by construction.
 
 Scenarios:
-  1. happy_path_pro_after_first_refine: stance returns pro_israel on the only
-     check (after the mandatory refinement). One refine, one stance call.
-  2. refinement_path_neutral_then_pro: stance returns neutral once, then
-     pro_israel after another refinement.
-  3. gave_up_via_neutral: stance always neutral; exhaust refine + regen
-     budgets, give up.
-  4. gave_up_via_off_topic: stance always off_topic_or_anti; each generation
-     burns one refinement loop before the late gate catches it and triggers
-     regen. Exhaust regen budget, give up.
-  5. router_none_skips_retrieval: when router picks 'none', the graph runs
+  1. happy_path_pro_after_first_refine: early gate proceeds, late stance returns
+     pro_israel after the mandatory refinement. One refine, one late stance call.
+  2. refinement_path_neutral_then_pro: early gate proceeds; late stance returns
+     neutral once, then pro_israel after another refinement.
+  3. gave_up_via_neutral: early gate proceeds; late stance always neutral;
+     exhaust refine + regen budgets, give up.
+  4. gave_up_via_off_topic_early_regen_then_late_giveup: raw survivor always
+     off_topic_or_anti; the EARLY gate regenerates while the budget lasts, then
+     (budget spent) hands off to the router so exactly ONE refinement pass runs
+     and the LATE gate records give-up. Early gate never finalizes.
+  5. early_stance_check_has_no_finalize_edge: topology guard; the early gate's
+     only out-edges are generate_initial and router (never finalize).
+  6. router_none_skips_retrieval: when router picks 'none', the graph runs
      skip_retrieval -> reflect -> refine -> hallucination_check (skipped) ->
      stance_check, without calling any retriever or the docs grader.
-  6. no_finalize_without_grounding_pass: safety property; every successful
+  7. no_finalize_without_grounding_pass: safety property; every successful
      run has at least one grounding check.
 
 Run: `uv run pytest tests/test_graph_offline.py`
@@ -40,7 +46,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents.graph.builder import build_graph
-from agents.graph.state import MAX_REFINE_ITERS, MAX_REGEN_ITERS
+from agents.graph.state import (
+    MAX_EARLY_REGEN_ITERS,
+    MAX_LATE_REGEN_ITERS,
+    MAX_REFINE_ITERS,
+)
 
 
 calls: Counter[str] = Counter()
@@ -51,13 +61,22 @@ def _make_scenario(
     *,
     grounded: bool = True,
     retrieval_mode: str = "web",
+    early_stance_sequence: list[str] | None = None,
 ):
-    """Patch every external call. `stance_sequence` is consumed in order by
-    `check_stance`; the last element repeats. `retrieval_mode` controls what
-    the router returns (web by default).
-    """
+    """Patch every external call.
 
-    def fake_generate_pair(topic, post):
+    `stance_sequence` is consumed in order by the LATE stance gate
+    (`stance_check`, after refinement); the last element repeats.
+    `early_stance_sequence` is consumed by the EARLY gate
+    (`early_stance_check`, on the raw survivor before refinement); it defaults
+    to always 'pro_israel' so the early gate just proceeds and the late gate
+    drives the scenario. Set it to exercise the off-topic short-circuit.
+    `retrieval_mode` controls what the router returns (web by default).
+    """
+    if early_stance_sequence is None:
+        early_stance_sequence = ["pro_israel"]
+
+    def fake_generate_pair(topic, post, regen_reason=""):
         calls["generate"] += 1
         return ("ARG A initial draft", "ARG B initial draft")
 
@@ -80,8 +99,9 @@ def _make_scenario(
         return "local", []
 
     def fake_grade_relevant(draft, chunks):
+        # New per-chunk contract: return the relevant SUBSET (here: keep all).
         calls["grade"] += 1
-        return True
+        return list(chunks)
 
     def fake_reflect(post, draft, evidence):
         calls["reflect"] += 1
@@ -108,6 +128,17 @@ def _make_scenario(
             verdict = last_stance
         return {"stance": verdict, "reason": f"stub:{verdict}"}
 
+    early_iter = iter(early_stance_sequence)
+    last_early = early_stance_sequence[-1]
+
+    def fake_early_check_stance(post, draft):
+        calls["early_stance"] += 1
+        try:
+            verdict = next(early_iter)
+        except StopIteration:
+            verdict = last_early
+        return {"stance": verdict, "reason": f"stub:early:{verdict}"}
+
     def fake_web_retrieve(self, query, k=None):
         calls["web_retrieve"] += 1
         return [f"[url] http://example.com/{query}\nweb content for {query}"]
@@ -125,6 +156,7 @@ def _make_scenario(
         mock.patch("agents.graph.nodes.refine.refine_draft", fake_refine),
         mock.patch("agents.graph.nodes.hallucination_check.check_grounding", fake_check_grounding),
         mock.patch("agents.graph.nodes.stance_check.check_stance", fake_check_stance),
+        mock.patch("agents.graph.nodes.early_stance_check.check_stance", fake_early_check_stance),
         mock.patch("agents.retrieval.WebRetriever.retrieve", fake_web_retrieve),
         mock.patch("agents.retrieval.LocalRetriever.retrieve", fake_local_retrieve),
         mock.patch("agents.retrieval.WebRetriever.__init__", lambda self, *a, **k: None),
@@ -139,9 +171,15 @@ def _run(
     *,
     grounded: bool = True,
     retrieval_mode: str = "web",
+    early_stance_sequence: list[str] | None = None,
 ) -> dict:
     calls.clear()
-    patches = _make_scenario(stance_sequence, grounded=grounded, retrieval_mode=retrieval_mode)
+    patches = _make_scenario(
+        stance_sequence,
+        grounded=grounded,
+        retrieval_mode=retrieval_mode,
+        early_stance_sequence=early_stance_sequence,
+    )
     for p in patches:
         p.start()
     try:
@@ -164,6 +202,7 @@ def test_happy_path_pro_after_first_refine():
     assert out.get("gave_up", False) is False
     assert calls["generate"] == 1
     assert calls["rank"] == 1
+    assert calls["early_stance"] == 1  # raw survivor gate (proceeds)
     assert calls["stance"] == 1  # only the post-refine check
     assert calls["refine"] == 1
     assert calls["grounding"] == 1
@@ -176,43 +215,75 @@ def test_refinement_path_neutral_then_pro():
     assert out.get("stance") == "pro_israel"
     assert out.get("gave_up", False) is False
     assert calls["generate"] == 1
-    assert calls["stance"] == 2  # two stance checks
+    assert calls["early_stance"] == 1  # one survivor (no regen), proceeds once
+    assert calls["stance"] == 2  # two late stance checks
     assert calls["refine"] == 2  # two refinement passes
     assert calls["router"] == 2
 
 
 def test_gave_up_via_neutral_then_escalation():
-    """stance always neutral: exhaust MAX_REFINE_ITERS, escalate to off-topic,
-    exhaust MAX_REGEN_ITERS, give up."""
+    """Late stance always neutral: exhaust MAX_REFINE_ITERS, escalate to
+    off-topic, exhaust MAX_LATE_REGEN_ITERS, give up.
+
+    The early gate proceeds (early sequence defaults to 'pro_israel'), so the
+    early regen budget is untouched — this test exercises the LATE side only.
+    """
     out = _run(["neutral_needs_refine"] * 100)
     assert out.get("gave_up") is True
     assert out.get("give_up_reason", "")
     assert out.get("stance") == "off_topic_or_anti"  # escalation result
     assert calls["generate"] >= 2  # at least one regeneration before giving up
-    # Worst case bound on total refinement passes. The escalation rule fires
-    # when refine_iter EXCEEDS MAX_REFINE_ITERS, so each generation runs
-    # MAX_REFINE_ITERS + 1 refinement passes before being thrown out. Across
-    # (MAX_REGEN_ITERS + 1) generations the bound is (MAX_REGEN_ITERS + 1) *
-    # (MAX_REFINE_ITERS + 1).
-    max_expected_refines = (MAX_REGEN_ITERS + 1) * (MAX_REFINE_ITERS + 1)
+    # Worst-case bound on total refinement passes. Escalation fires when
+    # refine_iter REACHES MAX_REFINE_ITERS (>=), so each generation runs
+    # exactly MAX_REFINE_ITERS refinement passes before being discarded. Across
+    # (MAX_LATE_REGEN_ITERS + 1) generations the tight bound is the product.
+    max_expected_refines = (MAX_LATE_REGEN_ITERS + 1) * MAX_REFINE_ITERS
     assert calls["refine"] <= max_expected_refines
 
 
-def test_gave_up_via_off_topic_burns_refinement_per_regen():
-    """stance always off_topic_or_anti: with no early stance gate, each
-    generation must burn ONE refinement pass before the late stance gate
-    catches it and triggers regen. After exhausting MAX_REGEN_ITERS, give up.
+def test_gave_up_via_off_topic_early_regen_then_late_giveup():
+    """Raw survivor always off_topic_or_anti, late gate also always
+    off_topic_or_anti. The early budget RESETS on each late regeneration, so the
+    two regen loops compose MULTIPLICATIVELY:
 
-    This is the cost of moving the stance gate to the end."""
-    out = _run(["off_topic_or_anti"] * 100)
+    There are (1 + MAX_LATE_REGEN_ITERS) "rounds" (the initial generation plus
+    one per late regeneration). Each round:
+      - the early gate regenerates MAX_EARLY_REGEN_ITERS times (no refinement
+        burned), then
+      - the early budget is spent for this round, so the early gate hands off to
+        the router; refinement runs once and the late gate sees off_topic and
+        either starts the next round (resetting the early budget) or gives up.
+
+    Totals:
+      generate     = (1 + MAX_LATE_REGEN_ITERS) * (MAX_EARLY_REGEN_ITERS + 1)
+      early_stance = same as generate (early gate fires every generation)
+      stance / refine / router / grounding = 1 + MAX_LATE_REGEN_ITERS
+        (only the handoff generation in each round reaches the refinement path)
+    """
+    out = _run(
+        ["off_topic_or_anti"] * 100,            # late gate (final pass) gives up
+        early_stance_sequence=["off_topic_or_anti"] * 100,
+    )
     assert out.get("gave_up") is True
     assert out.get("stance") == "off_topic_or_anti"
-    # Initial generation + MAX_REGEN_ITERS regenerations.
-    assert calls["generate"] == MAX_REGEN_ITERS + 1
-    # ONE refinement per generation (caught by stance gate after the first
-    # refinement pass), so total refines == generations.
-    assert calls["refine"] == MAX_REGEN_ITERS + 1
-    assert calls["stance"] == MAX_REGEN_ITERS + 1
+    rounds = 1 + MAX_LATE_REGEN_ITERS
+    expected_generations = rounds * (MAX_EARLY_REGEN_ITERS + 1)
+    assert calls["generate"] == expected_generations
+    assert calls["early_stance"] == expected_generations
+    expected_refines = rounds
+    assert calls["stance"] == expected_refines
+    assert calls["refine"] == expected_refines
+    assert calls["router"] == expected_refines
+    assert calls["grounding"] == expected_refines
+
+
+def test_early_stance_check_has_no_finalize_edge():
+    """Topology guard: early_stance_check routes only to generate_initial or
+    router — never directly to finalize. Give-up is the late gate's job."""
+    graph = build_graph().get_graph()
+    targets = {e.target for e in graph.edges if e.source == "early_stance_check"}
+    assert targets == {"generate_initial", "router"}
+    assert "finalize" not in targets
 
 
 def test_router_none_skips_retrieval():

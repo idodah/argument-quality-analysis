@@ -13,7 +13,7 @@ Three independent loops + one forward branch:
                    neutral_needs_refine -> router (REFINEMENT loop,
                      up to MAX_REFINE_ITERS passes per generation)
                    off_topic_or_anti    -> generate_initial (REGENERATION loop,
-                     up to MAX_REGEN_ITERS restarts; each resets refine_iter)
+                     up to MAX_LATE_REGEN_ITERS restarts; each resets refine_iter)
                    both budgets exhausted -> finalize (gave_up=True)
 
 Counters are incremented inside the nodes (hallucination_check, stance_check);

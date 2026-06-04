@@ -100,6 +100,16 @@ are not near-duplicates of each other.
 uv run python -m preprocessing.filter_by_similarity
 ```
 
+A final token-length filter drops pairs whose arguments fall outside
+`[MIN_TOKENS, MAX_TOKENS]` (per the ranker's tokenizer), caps the original-post
+length, and enforces a max delta/nodelta length ratio so neither baseline nor
+ranker can exploit raw length. This produces the `filtered_v2` split the models
+train on.
+
+```bash
+uv run python -m preprocessing.filter_by_tokens
+```
+
 For the Israel-focused RAG corpus, the `rag/` package scrapes CMV threads via
 arctic-shift, classifies each argument's stance, and ingests the high-confidence
 pro-Israel arguments (plus a few legal primary sources) into Chroma:
@@ -152,27 +162,50 @@ uv run python -m models.qwen
 
 The `agents` package wires a LangGraph workflow that drafts two candidate
 arguments, eliminates the weaker one up front on the Qwen ranker, then refines
-the survivor against retrieved evidence. Refinement is governed by two
+the survivor against retrieved evidence. Refinement is governed by four
 independent loops, each with its own cap:
 
 - **Grounding loop** (`hallucination_check -> refine`): re-refines while the
-  draft is ungrounded, up to `MAX_GROUND_RETRIES` times **per outer pass**
+  draft is ungrounded, up to `MAX_GROUND_RETRIES` times **per refinement pass**
   (reset by the router each pass).
-- **Outer / stance loop** (`stance_check -> router`): if the draft is not a
-  clearly pro-Israel reply, it reroutes for another refinement pass, up to
-  `MAX_OUTER_ITERS` passes; once the cap is hit, `force_regenerate` does one
-  last targeted pro-Israel rewrite.
+- **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
+  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
+  up to `MAX_REFINE_ITERS` passes per generation.
+- **Regeneration loops** (`stance_check`/`early_stance_check ->
+  generate_initial`): if the draft is off-topic or anti-Israel, both drafts are
+  thrown out and regenerated. The early gate regenerates up to
+  `MAX_EARLY_REGEN_ITERS` times **per generation** (its budget reset on each
+  fresh generation); the late gate regenerates up to `MAX_LATE_REGEN_ITERS`
+  times across the whole run (each regeneration resets the refinement counter).
+  When both the refinement and late-regeneration budgets are spent the late
+  `stance_check` records `gave_up=True` and reports it honestly rather than
+  shipping a non-pro-Israel argument. (The early gate only regenerates; it never
+  decides give-up.)
 
-Worst case is therefore `MAX_OUTER_ITERS x MAX_GROUND_RETRIES` grounding
-refines (3 x 2 = 6).
+There are **two stance gates**: a cheap `early_stance_check` on the raw survivor
+(before any refinement — catches off-topic/anti survivors and regenerates
+immediately, so a hopeless draft never burns a full refinement loop) and the
+authoritative `stance_check` after `hallucination_check` (every argument that
+ships via the late gate has passed through the grounding pass).
+
+> **On "grounded".** The hallucination check verifies a claim is supported by
+> the *retrieved evidence*, and the web arm is restricted to a pro-Israel /
+> advocacy domain allow-list (`WEB_ALLOWED_DOMAINS`). So `grounded=True` means
+> "consistent with the retrieved (one-sided, by design) sources", **not**
+> "independently fact-checked / neutral". The `local` and `none` retrieval arms
+> have no factual evidence to check against, so they mark the draft grounded
+> *without running the grader*; `final_scores["grounding_verified"]`
+> distinguishes a grader-verified pass (`True`) from an assumed one (`False`).
+> Keep this in mind for any analysis that leans on the `grounded` flag.
 
 Four patterns are fused into the graph:
 
 - **Adaptive RAG** — the router picks between local Chroma and Tavily web
   search each pass.
-- **Self-RAG** — two layers: `grade_docs` gives a binary relevance verdict
-  (and triggers a web search if the local docs are irrelevant), and
-  `hallucination_check` verifies the refined draft is grounded in the evidence.
+- **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
+  relevance and keeps only the relevant subset (triggering a web search if none
+  survive), and `hallucination_check` verifies the refined draft is grounded in
+  the evidence.
 - **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
 - **Reflexion** — every critique is accumulated into a running
   `critique_history` that the refiner consumes in full, so it stops repeating
@@ -183,21 +216,35 @@ Four patterns are fused into the graph:
 - **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
   `arg_b`) from the topic and original post.
 - **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
-  initial drafts, keeps the winner as the active side, and marks the loser
-  converged so only the survivor iterates from here. This is the only A-vs-B
-  decision in the graph, made when both drafts are at equal polish.
-- **router** — Adaptive-RAG: picks `local` or `web` for the active side this
-  pass; when it picks `web`, the same call also plans the search queries that
-  target the critique's evidence gaps. It also resets the grounding-retry
-  budget and clears any stale grounding verdict at the start of each pass. (Set
-  `FORCE_RETRIEVAL_MODE={local|web}` in the env to pin the route for debugging.)
+  initial drafts and keeps the winner as the active side; only the survivor
+  iterates from here. This is the only A-vs-B decision in the graph, made when
+  both drafts are at equal polish. Elimination is permanent and not
+  stance-aware: a wrongly-eliminated-but-salvageable draft is only recoverable
+  via a full regeneration (which replaces both drafts).
+- **early_stance_check** — cheap pre-refinement stance gate on the raw
+  survivor. Catches only the off-topic / anti-Israel case (which refinement
+  cannot rescue) and regenerates immediately *while the regeneration budget
+  lasts*; on-topic survivors fall through to the router. It has just two
+  out-edges (`generate_initial` | `router`) and never routes to `finalize`:
+  once the regen budget is spent it hands the draft to the router so the late
+  `stance_check` is always reached. Give-up is decided solely by the late gate.
+- **router** — Adaptive-RAG: picks `local`, `web`, or `none` (skip retrieval —
+  the current draft is strong enough to refine without new evidence) for the
+  active side this pass; when it picks `web`, the same call also plans the
+  search queries that target the critique's evidence gaps. It also resets the
+  grounding-retry budget and clears any stale grounding verdict at the start of
+  each pass. (Set `FORCE_RETRIEVAL_MODE={local|web}` in the env to pin the route
+  for debugging.)
 - **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
-- **grade_docs** — Self-RAG binary relevance verdict. If the docs are relevant
-  they feed `reflect`; if not, they are dropped and `web_search=True` routes to
-  the web-search fallback first.
+- **skip_retrieval** — the router's `none` arm: adds no new documents and
+  preserves the existing pool, so refinement still runs (and can cite
+  previously-grounded facts) without fetching fresh evidence this pass.
+- **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
+  subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
+  and `web_search=True` routes to the web-search fallback first.
 - **web_search** — fallback triggered by an irrelevant grade: runs a Tavily
   search (planning queries from the critique if the router didn't) and fills
   the citation pool with web results before reflecting.
@@ -210,18 +257,19 @@ Four patterns are fused into the graph:
   to evidence-backed claims. Drops an empty `### Sources` footer if the model
   cited nothing.
 - **hallucination_check** — Self-RAG binary groundedness check. Skipped when
-  retrieval was `local` (those chunks are example arguments, not factual
-  sources). Otherwise grades the draft; only a genuinely fabricated fact counts
-  as ungrounded (citation-marker problems are tolerated). An ungrounded verdict
-  spends one grounding retry and loops back to `refine` until the per-pass
-  budget is spent.
-- **stance_check** — verifies the draft is a clearly pro-Israel reply. On
-  failure it opens a new outer pass (records a `regen_reason` that the next
-  refine must fix) and reroutes to the router, or — once `MAX_OUTER_ITERS` is
-  hit — routes to `force_regenerate`.
+  retrieval was `local` or `none` (no factual evidence to check against — those
+  passes are marked grounded but `grounding_verified=False`). Otherwise grades
+  the draft; only a genuinely fabricated fact counts as ungrounded
+  (citation-marker problems are tolerated). An ungrounded verdict spends one
+  grounding retry and loops back to `refine` until the per-pass budget is spent.
+- **stance_check** — the authoritative gate: classifies the refined draft as
+  `pro_israel` (→ finalize), `neutral_needs_refine` (→ router, refinement loop)
+  or `off_topic_or_anti` (→ generate_initial, regeneration loop). It records a
+  `regen_reason` the next pass must fix, and sets `gave_up=True` (→ finalize)
+  when both the refinement and regeneration budgets are exhausted.
 - **finalize** — declares the surviving side the winner, publishes the
-  result as `generation`, surfaces any grounded / pro-Israel warnings, and
-  prints the run's trajectory.
+  result as `generation`, surfaces any grounded / pro-Israel / gave-up warnings
+  (and whether grounding was verified), and prints the run's trajectory.
 
 Run end-to-end:
 

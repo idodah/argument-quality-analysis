@@ -5,19 +5,37 @@ from __future__ import annotations
 import re
 from typing import Literal, TypedDict
 
-# Iteration caps for the three independent loops:
-#   - refinement loop (stance_check -> router): up to MAX_REFINE_ITERS passes,
-#     triggered when the argument is on-topic but doesn't yet make a pro-Israel
-#     case.
-#   - regeneration loop (stance_check -> generate_initial): up to MAX_REGEN_ITERS
-#     fresh starts, triggered when the argument is off-topic OR explicitly
-#     anti-Israel. Each regeneration resets the refinement counter, so worst case
-#     is (MAX_REGEN_ITERS + 1) generations x MAX_REFINE_ITERS refinements.
-#   - grounding loop (hallucination_check -> refine): up to MAX_GROUND_RETRIES
-#     per refinement pass.
-MAX_REFINE_ITERS = 5  # max stance_check -> router passes per generation attempt
-MAX_REGEN_ITERS = 2   # max stance_check -> generate_initial restarts
-MAX_GROUND_RETRIES = 2  # max grounding re-refines per refinement pass
+# Iteration caps. Four independent loops, each with its own budget:
+#
+#   - EARLY regeneration loop (early_stance_check -> generate_initial): the
+#     cheap pre-refinement gate may regenerate up to MAX_EARLY_REGEN_ITERS
+#     times PER GENERATION. Once that budget is spent the early gate stops
+#     short-circuiting and hands the draft to the refinement path (the late
+#     stance gate then decides what to do). The budget is reset whenever the
+#     late gate starts a fresh generation, so the two regen loops compose
+#     multiplicatively (see the LATE regeneration loop below).
+#
+#   - REFINEMENT loop (late stance_check -> router): up to MAX_REFINE_ITERS
+#     passes per generation. Triggered when the argument is on-topic but
+#     doesn't yet make a pro-Israel case. When this budget is spent, the late
+#     stance gate escalates the verdict to off_topic_or_anti, which routes to
+#     generate_initial via the LATE regeneration loop.
+#
+#   - LATE regeneration loop (late stance_check -> generate_initial): up to
+#     MAX_LATE_REGEN_ITERS fresh starts driven by the late gate (either an
+#     off_topic_or_anti verdict, or a refinement-budget-exhaustion escalation).
+#     Each fresh start RESETS the early gate's budget, so every generation gets
+#     its own full set of early regenerations; the loops compose
+#     multiplicatively (up to (1 + MAX_LATE_REGEN_ITERS) generations, each able
+#     to be early-regenerated up to MAX_EARLY_REGEN_ITERS times). Once both
+#     gates' budgets are spent the late gate gives up.
+#
+#   - GROUNDING loop (hallucination_check -> refine): up to MAX_GROUND_RETRIES
+#     re-refines per refinement pass.
+MAX_REFINE_ITERS = 3       # stance_check -> router: 2 retries (1 first pass + 2)
+MAX_EARLY_REGEN_ITERS = 2  # early_stance_check -> generate_initial: 2 retries
+MAX_LATE_REGEN_ITERS = 1   # stance_check -> generate_initial: 1 retry
+MAX_GROUND_RETRIES = 2     # hallucination_check -> refine: 2 retries per pass
 LOCAL_K = 4
 WEB_K = 5  # Tavily max_results per web query
 WEB_QUERIES = 3  # number of search queries the web-query planner generates per iteration (router may pick 3-5 terms)
@@ -72,43 +90,66 @@ class GraphState(TypedDict, total=False):
     topic: str
     original_post: str
 
+    # TRANSIENT handoff slots between `generate_initial` and `eliminate_loser`
+    # ONLY. After eliminate_loser writes the survivor to `argument`, these are
+    # never read again — they remain in state for traceability but no node
+    # downstream of eliminate_loser branches on them.
     arg_a: str
     arg_b: str
-    arg_a_prev: str
-    arg_b_prev: str
 
-    iter_a: int
-    iter_b: int
-    converged_a: bool
-    converged_b: bool
+    # Single-argument view. `eliminate_loser` writes the surviving raw draft
+    # here; `refine` overwrites it on each pass. The Qwen pairwise comparison
+    # happens once on the two initial drafts in `eliminate_loser` — after
+    # that, only `argument` is read by downstream nodes.
+    argument: str
+    # Refinement-pass counter (number of times `refine` ran on the current
+    # generation; reset on regeneration). Used for trajectory/logging only.
+    iter: int
+    # The side eliminate_loser picked ("A" or "B"). Cosmetic — preserved for
+    # the legacy `winner` field in `final_scores`; nothing reads it for control
+    # flow.
+    winner: Side
 
-    active_side: Side
+    # Routing decision stamped by early_stance_check for early_stance_router to
+    # read ("generate_initial" | "router"). Avoids re-deriving the branch from
+    # early_regen_iter, which the node has already incremented.
+    early_action: str
     retrieval_mode: RetrievalMode
     web_queries: list[str]
-    retrieved: list[str]
     critique: str
-    critique_a: str
-    critique_b: str
     # Accumulated Reflexion memory: every critique produced so far, in order,
     # so refine can avoid repeating past mistakes (deeper Reflexion).
     critique_history: list[str]
 
     grounded: bool
+    # True when the hallucination grader actually ran against retrieved factual
+    # evidence; False when grounding was ASSUMED because the pass had no such
+    # evidence to check (local/none retrieval). Keeps "verified grounded" and
+    # "assumed grounded" distinguishable in final_scores.
+    grounding_verified: bool
     hallucination_issues: list[str]
 
-    # Independent loop counters (see MAX_REFINE_ITERS / MAX_REGEN_ITERS /
-    # MAX_GROUND_RETRIES). refine_iter resets each regeneration.
-    refine_iter: int      # stance_check -> router refinement passes
-    regen_iter: int       # stance_check -> generate_initial restarts (across whole run)
-    ground_retries: int   # grounding re-refines within the current refinement pass
+    # Loop counters (see MAX_*_ITERS / MAX_GROUND_RETRIES).
+    # refine_iter, ground_retries, AND early_regen_iter reset each generation
+    # (the late gate resets all three when it starts a fresh generation);
+    # late_regen_iter persists across the whole run.
+    refine_iter: int        # stance_check -> router refinement passes
+    early_regen_iter: int   # early_stance_check -> generate_initial restarts
+    late_regen_iter: int    # stance_check -> generate_initial restarts
+    ground_retries: int     # grounding re-refines within the current refinement pass
     # Set when a stance failure sends us back to the router (or to
     # generate_initial), telling the next pass why the previous attempt failed.
     regen_reason: str
+    # Count of consecutive refinement PASSES whose refine output tripped the
+    # critique-shaped guard. When this reaches 2, the next pass escalates to
+    # regeneration rather than burning the rest of the refinement budget on a
+    # stuck model. `noop_streak_pass` records the refine_iter the streak was
+    # last bumped for, so the grounding loop's repeated refine calls within one
+    # pass count that pass at most once. Both reset together on regeneration.
+    consecutive_noop_refines: int
+    noop_streak_pass: int
 
-    # New single-argument view (the merged self-RAG graph). After
-    # eliminate_loser, `generation` mirrors the surviving side's current
-    # argument; `documents` accumulates retrieved evidence/citations;
-    # `web_search` flags that grade_docs found the local docs insufficient.
+    # Post + retrieval/citation pool.
     post: str
     generation: str       # clean argument for display (citations stripped)
     generation_raw: str   # the cited draft kept for debugging/traceability
@@ -117,7 +158,6 @@ class GraphState(TypedDict, total=False):
     documents: list[str]
 
     history: list[dict]
-    winner: Literal["A", "B"]
     # Ternary stance + the legacy boolean (kept for run.py / tests / external
     # consumers that read pro_israel_reply directly). pro_israel_reply is just
     # `stance == "pro_israel"`.
@@ -131,15 +171,17 @@ class GraphState(TypedDict, total=False):
     final_scores: dict
 
 
-def active_view(state: GraphState) -> tuple[Side, str, str, str]:
-    """Return (side, current_arg, prev_arg, critique) for the active side."""
-    side = state.get("active_side", "A")
-    if side == "A":
-        return "A", state["arg_a"], state.get("arg_a_prev", ""), state.get("critique_a", "")
-    return "B", state["arg_b"], state.get("arg_b_prev", ""), state.get("critique_b", "")
+def current_argument(state: GraphState) -> str:
+    """Return the current working draft. Single-side; no A/B branching."""
+    return state.get("argument", "")
 
 
 _CITE_MARKER_RE = re.compile(r"\s*\[\d+(?:\s*,\s*\d+)*\]")
+# `\Z` anchors to end-of-string and `.*` is greedy under DOTALL, so this matches
+# the LAST occurrence of `### Sources` (or any heading-level) onward — exactly
+# what we want when the prompt puts the Sources footer at the very end. If the
+# model misbehaves and emits a stray `### Sources` mid-text, this still strips
+# from that point on (no real footer to preserve), which is the safer default.
 _SOURCES_BLOCK_RE = re.compile(r"\n*#+\s*Sources.*\Z", re.IGNORECASE | re.DOTALL)
 
 

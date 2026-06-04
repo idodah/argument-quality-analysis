@@ -8,20 +8,18 @@ latest note.
 from __future__ import annotations
 
 from agents.graph.chains.reflector import reflect_on_draft
-from agents.graph.state import GraphState, active_view
+from agents.graph.state import GraphState, current_argument
 
 
 def reflect(state: GraphState) -> GraphState:
-    side, current, _prev, _crit = active_view(state)
-    evidence = state.get("documents") or state.get("retrieved") or []
+    current = current_argument(state)
+    evidence = state.get("documents") or []
     critique = reflect_on_draft(state["original_post"], current, evidence)
 
     pass_n = state.get("refine_iter", 0) + 1
     labeled = f"[critique from pass {pass_n}]\n{critique}"
     history = state.get("critique_history", []) + [labeled]
-    print(f"[reflect] side={side} pass={pass_n} critique={len(critique)} chars "
+    print(f"[reflect] pass={pass_n} critique={len(critique)} chars "
           f"(history now {len(history)} critiques)")
 
-    out = {**state, "critique": critique, "critique_history": history}
-    out["critique_a" if side == "A" else "critique_b"] = critique
-    return out
+    return {"critique": critique, "critique_history": history}

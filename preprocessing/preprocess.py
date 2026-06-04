@@ -3,9 +3,12 @@ Preprocess argument quality pairs from both Webis-CMV-20 and winning-args-corpus
 
 Pipeline:
   1. Parse raw pairs from both sources
-  2. Clean text and count tokens
-  3. Compute OpenAI embeddings and cosine similarities
-  4. Upload to Hugging Face Hub and save a local Excel copy
+  2. Clean text, normalize topics, drop empty/duplicate pairs
+  3. Keep the longest original_post per thread
+  4. Save a local parquet copy and upload to the Hugging Face Hub (split='full')
+
+Downstream, `filter_by_similarity` and `filter_by_tokens` further filter this
+'full' split into the 'filtered' / 'filtered_v2' splits the models train on.
 """
 
 import os

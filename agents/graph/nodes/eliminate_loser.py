@@ -7,10 +7,18 @@ the only A-vs-B decision to the moment when both arguments are at the same
 level of polish (raw initial), which is the fair comparison.
 
 The ranker only decides which of the two drafts is *better* — it does not
-verify that the winner is actually pro-Israel. That job belongs to
-`stance_check` downstream: if the chosen survivor is off-topic or anti-Israel,
-stance_check will trigger a regeneration (and both drafts get replaced). So
-the stance gate effectively overrides the ranker on bad initial pairs.
+verify that the winner is actually pro-Israel. That job belongs to the stance
+gate downstream: if the chosen survivor is off-topic or anti-Israel, stance
+check will trigger a regeneration (and both drafts get replaced). So the stance
+gate effectively overrides the ranker on bad initial pairs.
+
+CAVEAT — elimination is permanent and not stance-aware. The loser is frozen
+(only the survivor iterates), and regeneration discards BOTH drafts, not just
+the survivor. So if the ranker picks the weaker of two similar-quality drafts,
+the better raw material is unrecoverable except by a full regeneration. We
+accept this: a per-iteration A-vs-B race would cost a ranker call every pass,
+and the cheap stance gate (early_stance_check) plus regeneration already
+catch the case where the survivor is on the wrong track.
 """
 
 from __future__ import annotations
@@ -41,20 +49,10 @@ def eliminate_loser(state: GraphState) -> GraphState:
         "survivor": winner,
     }]
 
-    if winner == "A":
-        return {
-            **state,
-            "active_side": "A",
-            "converged_a": False,
-            "converged_b": True,  # B is out; never touch again
-            "generation": state["arg_a"],
-            "history": history,
-        }
+    chosen = state["arg_a"] if winner == "A" else state["arg_b"]
     return {
-        **state,
-        "active_side": "B",
-        "converged_a": True,  # A is out; never touch again
-        "converged_b": False,
-        "generation": state["arg_b"],
+        "winner": winner,
+        "argument": chosen,
+        "generation": chosen,
         "history": history,
     }

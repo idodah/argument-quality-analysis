@@ -41,7 +41,6 @@ MAX_DELTA_NODELTA_SIM = 0.95
 
 _OPENAI_EMBED_MODEL = "text-embedding-3-small"
 _OPENAI_BATCH_SIZE = 512
-_EMBED_MAX_TOKENS = 8000
 
 
 def embed_texts(texts: list[str]) -> np.ndarray:
