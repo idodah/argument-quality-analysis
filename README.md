@@ -5,7 +5,7 @@ r/changemyview (CMV), and then uses those signals to drive an agentic
 refinement loop that improves a candidate argument against a given post.
 
 The project is organized around three core parts, plus a retrieval-corpus
-pipeline, a web UI, and an offline test suite:
+pipeline and an offline test suite:
 
 1. **Preprocessing** — building a clean pair-wise dataset of delta-awarded vs.
    non-delta CMV arguments.
@@ -17,9 +17,10 @@ pipeline, a web UI, and an offline test suite:
 
 Supporting these are **RAG** (`rag/`), the pro-Israel retrieval-corpus pipeline
 that scrapes, classifies, and ingests CMV arguments into Chroma for the agents;
-the **web app** (`webapp/`), a Gradio UI over the same generation entrypoint as
-the CLI; and **tests** (`tests/`), a fully offline suite covering graph wiring,
-helpers, and the package layout.
+the **harvester** (`harvester/`), which detects anti-Israel posts live across
+Reddit/Lemmy/PieFed and drafts rebuttals with the agent workflow; and **tests**
+(`tests/`), a fully offline suite covering graph wiring, helpers, and the package
+layout.
 
 ## Repository layout
 
@@ -28,7 +29,7 @@ preprocessing/   # generic pair-wise data pipelines (Webis-CMV-20, winning-args-
 rag/             # pro-Israel RAG-corpus pipeline (scrape -> classify -> ingest)
 models/          # TF-IDF baselines + Qwen3-8B pair-wise ranker
 agents/          # LangGraph refinement workflow + retrieval backends + generate entrypoint
-webapp/          # Gradio web UI: paste a CMV post, get a rebuttal (see "Web app")
+harvester/       # live multi-platform detector -> draft -> notify (see "Harvester")
 tests/           # offline graph-wiring, helper-unit, and import smoke tests
 schemas.py       # Pydantic types shared across the pipelines
 graph.png        # rendered topology of the agentic workflow (see "Agentic refinement")
@@ -75,8 +76,9 @@ uv run pytest
 ```
 
 It covers the graph's loop caps and termination (`test_graph_offline.py`), the
-deterministic string/parse helpers (`test_helpers.py`), and the package layout /
-shared entrypoint (`test_layout_imports.py`).
+deterministic string/parse helpers (`test_helpers.py`), the package layout /
+shared entrypoint (`test_layout_imports.py`), and the harvester's Fediverse
+adapter parsing (`test_fediverse_adapters.py`).
 
 ## Data pipeline
 
@@ -283,19 +285,104 @@ Graph topology:
 
 ![graph](graph.png)
 
-## Web app
+## Harvester
 
-A Gradio UI for trying the workflow interactively, without Reddit: paste a CMV
-**topic** and the **anti-Israel post body**, and it returns the generated
-rebuttal plus its grounded / pro-Israel status. It reuses the same
-`agents.generate.generate_pro_israel_response` entrypoint as the
-`agents.graph.builder` CLI, so both run identical generation logic.
+The `harvester/` package applies the agent workflow to live data: it searches
+**Reddit, Lemmy, and PieFed** for recent anti-Israel posts, drafts a pro-Israel
+rebuttal with the same `agents.generate` entrypoint, and pushes it to the operator
+via ntfy. It is **read + draft + notify only** — it never posts back; a human
+reviews and decides whether to post.
 
-```bash
-uv run python -m webapp.app
+```
+        INGESTION                  PIPELINE (per post)            POST-GENERATION
+  ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
+  │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
+  │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py (SQLite) │
+  │  dedup + age + sort │   │ ─► agents.generate       │   │                      │
+  └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
+            ▲
+   fediverse/ adapters (Lemmy, PieFed, Reddit) — also exposed read-only via fediverse_mcp.py
 ```
 
-Then open the local URL Gradio prints. A full run loads the Qwen ranker and
-makes several LLM + web-search calls, so expect tens of seconds to a couple of
-minutes per request. Needs `OPENAI_API_KEY`, `TAVILY_API_KEY`, `RANKER_PATH`,
-and `HF_TOKEN` in `.env`.
+### Run it
+
+`orchestrate.py` is the single entrypoint and a **one-shot** — it runs once and
+exits; schedule it externally (cron, a systemd timer, or on AWS an EventBridge
+schedule → a Fargate task):
+
+```bash
+# Defaults: ≤3 answers, only posts from the last 24h, Reddit-first then newest.
+uv run python -m harvester.orchestrate
+uv run python -m harvester.orchestrate --dry-run                # search+classify, no spend
+uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
+```
+
+Notifier setup: set `NTFY_TOPIC=cmv-<random>` in `.env` and subscribe to that
+topic in the ntfy app (optional `NTFY_SERVER`, `NTFY_TOKEN`). The agent graph
+also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`, `RANKER_PATH`,
+`HF_TOKEN`).
+
+Each run searches every platform, drops posts older than `--max-age-hours`
+(default 24) or already answered, and — if anything new is in window — answers up
+to `--max-generations` (default 3), Reddit-first then newest: classify → draft →
+notify. If nothing is new, it does nothing.
+
+#### Dedup guarantee
+
+Each post is answered **at most once, ever**. On first sight — before any
+classify/generate work — its **canonical id** (the ActivityPub `ap_id`, or the
+Reddit permalink) is claimed in a SQLite `seen` ledger (atomic `INSERT OR
+IGNORE`, race-safe). The *same federated post on Lemmy and PieFed* shares a
+canonical id, so it's answered once. `--dry-run` only peeks, never consumes the
+ledger. The ledger persists in `harvester_tracking.db` (`HARVESTER_DB`); delete
+it to reset.
+
+### Files
+
+| File | Role |
+|------|------|
+| `orchestrate.py` | The entrypoint. Search → dedup/age/sort → classify → generate → notify. |
+| `fetch.py` | `fetch_from_rss()`: read the live Reddit Atom feed into `Post` objects (HTML → text). |
+| `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
+| `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
+| `classify.py` | Cheap keyword prefilter, then an LLM anti-Israel stance classifier. |
+| `notify.py` | Send one ntfy push per generated response (the only outbound write). |
+| `tracking.py` | SQLite: the `seen` dedup ledger + a `responses` store of generated rebuttals. |
+
+**Cross-section dependency:** the only calls outside `harvester/` are to
+`agents/` (`orchestrate.py` → `agents.generate`, `classify.py` → `agents.llm`);
+everything else is self-contained.
+
+### The Fediverse
+
+Reddit's data API is approval-gated, but its public `/r/changemyview/new/.rss`
+feed and the Lemmy/PieFed APIs are free to read unauthenticated. Lemmy and PieFed
+are Reddit-like federated platforms where anti-Israel content is abundant. (Mbin
+was evaluated and skipped — its search requires OAuth.)
+
+`fediverse_mcp.py` exposes the read tools (`search_posts`, `get_thread`) over MCP.
+The tools are read-only; the orchestrator itself currently drives them as a
+deterministic loop.
+
+### Out of scope: auto-posting
+
+The pipeline ends at **notifying you** — it never posts to Reddit/Lemmy/PieFed.
+Auto-posting political rebuttals violates these platforms' rules and risks bans,
+so a human reviews and posts manually.
+
+## Security
+
+The harvester ingests **100% attacker-authored** text (any Reddit/Lemmy/PieFed
+user can craft a post), so it ships with input-trust-boundary defenses:
+
+- **Prompt injection** — untrusted title/body are fenced and neutralized
+  (`harvester/classify.py::_neutralize`) before reaching the classifier and
+  `agents.generate`; the graph's own `stance_check` / `hallucination_check` gates
+  are the output-validation backstop, so a flipped draft is never shipped.
+- **SSRF** — `harvester/fediverse/base.py::assert_safe_url()` blocks outbound
+  requests to private / loopback / link-local / reserved IPs (every resolved
+  address checked, defeating DNS rebinding), guarding the cloud metadata endpoint.
+- **Cost abuse** — `--max-generations` and `--max-age-hours` bound paid work per
+  run, and the `seen` ledger prevents re-answering.
+
+`tests/test_security.py` covers the SSRF guard and the injection neutralizer.
