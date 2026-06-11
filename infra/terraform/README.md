@@ -65,8 +65,49 @@ aws secretsmanager put-secret-value --secret-id cmv-harvester/ntfy \
   --secret-string '{"topic":"cmv-...","token":"tk_..."}'
 ```
 
-CI (GitHub Actions, next step) builds/pushes the image to the ECR repo and runs
-`plan` on PRs / `apply` on merge via an OIDC-assumed role.
+## CI/CD (GitHub Actions)
+
+Three workflows in `.github/workflows/`, all auth'd via GitHub **OIDC** (no
+static AWS keys):
+
+| Workflow | Trigger | Does |
+|----------|---------|------|
+| `tests.yml` | every PR / push | runs the offline `pytest` suite (the gate) |
+| `terraform.yml` | PR / push touching `infra/terraform/**` | `fmt`+`validate`+`plan` on PR, `apply` on merge to `main` |
+| `deploy-image.yml` | push to `main` touching app code / Dockerfile | builds the harvester image, pushes to ECR (tags: commit sha + `latest`) |
+
+### One-time bootstrap
+
+The OIDC provider + CI role live in `oidc.tf`, but there's a chicken-and-egg:
+the CI role is needed to run CI, but it's created *by* Terraform. So the **first**
+apply is run locally (with admin creds); after that, CI uses the
+`cmv-harvester-ci` role it created. (If the account already has the GitHub OIDC
+provider, set `-var github_oidc_provider_exists=true` to avoid a duplicate.)
+
+### Required GitHub repo variables (Settings → Secrets and variables → Actions)
+
+Set as **variables** (not secrets — none are sensitive):
+
+| Variable | Value |
+|----------|-------|
+| `AWS_ROLE_ARN` | the `ci_role_arn` Terraform output |
+| `AWS_REGION` | deployment region |
+| `TF_STATE_BUCKET` / `TF_LOCK_TABLE` | the remote-state bucket + lock table |
+| `ECR_REPOSITORY` | `cmv-harvester/harvester` (the `ecr_repository_url` path part) |
+| `RANKER_MODEL_S3_URI` / `RANKER_IMAGE_URI` | required Terraform inputs |
+| `BUDGET_ALERT_EMAIL` | budget alert recipient |
+| `CHROMA_S3_URI` | (optional) S3 location of the prebuilt `.chroma/` corpus, fetched into the image build |
+
+## Validate locally (no AWS needed)
+
+```bash
+terraform fmt -check
+terraform init -backend=false
+terraform validate
+```
+
+`validate` checks the config against the AWS provider schema (it catches
+unknown resources/attributes); a real `plan` needs credentials.
 
 ## Validate locally (no AWS needed)
 
