@@ -55,6 +55,11 @@ COPY --from=builder /opt/venv /opt/venv
 # Only the source the runtime path imports: the agent graph, the harvester, and
 # the prebuilt read-only RAG corpus. (models/ is intentionally omitted — its only
 # runtime use is the in-process ranker, which the SageMaker path replaces.)
+# NOTE: .chroma/ is a generated, gitignored artifact, so it is NOT in a fresh git
+# checkout. CI fetches it from S3 into the build context before `docker build`
+# (see .github/workflows/deploy-image.yml); locally it's already present. If it's
+# missing the local-retrieval arm just returns no docs (agents/retrieval.py
+# tolerates an empty corpus), so the build must not hard-fail on it.
 COPY agents/   ./agents/
 COPY harvester/ ./harvester/
 COPY .chroma/  ./.chroma/

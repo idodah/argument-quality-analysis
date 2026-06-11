@@ -1,0 +1,31 @@
+name: tests
+
+# The offline test suite — the gate for every PR and push. No AWS, no network,
+# no model loading (all LLM/retrieval/ranker/storage boundaries are stubbed), so
+# it needs no credentials.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Sync deps
+        run: uv sync --frozen
+
+      - name: Run offline test suite
+        run: uv run pytest -q
