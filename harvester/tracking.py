@@ -1,15 +1,18 @@
-"""SQLite store: the dedup ledger + a record of generated counter-arguments.
+"""Dedup ledger + record of generated counter-arguments.
 
-Two responsibilities:
+Two responsibilities, exposed as three module-level functions the orchestrator
+calls — `mark_seen`, `is_seen`, `record`:
   - `seen` ledger (`mark_seen` / `is_seen`): claim each examined post by canonical
     id so it is never answered twice (the orchestrator's dedup guarantee).
-  - `responses` table (`record`): persist each generated rebuttal + quality flags.
+  - `responses` (`record`): persist each generated rebuttal + quality flags.
 
-SQLite on purpose: no server, no API key, one file. The access layer is a few
-functions, so a different backend later (e.g. DynamoDB for AWS) means reimplementing
-this one module behind the same `mark_seen` / `is_seen` / `record` API.
-
-DB path: HARVESTER_DB env var, else `harvester_tracking.db` in the cwd.
+Two interchangeable backends behind that one API, chosen by environment:
+  - **DynamoDB** (deployed on AWS): set `DDB_SEEN_TABLE` and `DDB_RESPONSES_TABLE`.
+    `mark_seen` is a conditional `PutItem` (`attribute_not_exists`) — the same
+    atomic, race-free claim the SQLite PRIMARY KEY gave us.
+  - **SQLite** (local / offline / tests): no env needed; one file at
+    `HARVESTER_DB` (default `harvester_tracking.db`). This is the default so the
+    test suite and local runs need no AWS.
 """
 
 from __future__ import annotations
@@ -19,6 +22,18 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Backend selection
+# ---------------------------------------------------------------------------
+
+def _use_dynamo() -> bool:
+    return bool(os.environ.get("DDB_SEEN_TABLE") and os.environ.get("DDB_RESPONSES_TABLE"))
+
+
+# ---------------------------------------------------------------------------
+# SQLite backend (default)
+# ---------------------------------------------------------------------------
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS responses (
@@ -59,34 +74,40 @@ def _connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def record(result: dict, db_path: Path | None = None) -> bool:
-    """Insert one generated result. Returns True if inserted, False if the id was
-    already present (idempotent — safe to call on re-delivered posts).
+def _row_from_result(result: dict) -> dict:
+    """Normalize a `generate_pro_israel_response` result (augmented with
+    id/title/url/original_post) into the column/attribute set both backends store."""
+    title = result.get("title") or ""
+    return {
+        "id": str(result.get("id") or ""),
+        "title": title,
+        "topic": result.get("topic") or title,   # topic defaults to the CMV title
+        "url": result.get("url") or "",
+        "original_post": result.get("original_post") or result.get("body") or "",
+        "generation": result.get("generation") or "",
+        "sources": result.get("sources") or [],
+        "grounded": bool(result.get("grounded", True)),
+        "pro_israel": bool(result.get("pro_israel_reply", True)),
+        "stance": result.get("stance") or "",
+        "gave_up": bool(result.get("gave_up", False)),
+        "created_at": time.time(),
+    }
 
-    `result` is the dict from `generate_pro_israel_response`, augmented with
-    `id`/`title`/`url`/`original_post`. The CMV topic is the post title.
-    """
+
+def _sqlite_record(result: dict, db_path: Path | None = None) -> bool:
     conn = _connect(db_path)
     try:
-        title = result.get("title") or ""
+        r = _row_from_result(result)
         conn.execute(
             """INSERT INTO responses
                (id, title, topic, url, original_post, generation, sources,
                 grounded, pro_israel, stance, gave_up, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                str(result.get("id") or ""),
-                title,
-                result.get("topic") or title,   # topic defaults to the CMV title
-                result.get("url") or "",
-                result.get("original_post") or result.get("body") or "",
-                result.get("generation") or "",
-                json.dumps(result.get("sources") or []),
-                int(bool(result.get("grounded", True))),
-                int(bool(result.get("pro_israel_reply", True))),
-                result.get("stance") or "",
-                int(bool(result.get("gave_up", False))),
-                time.time(),
+                r["id"], r["title"], r["topic"], r["url"], r["original_post"],
+                r["generation"], json.dumps(r["sources"]),
+                int(r["grounded"]), int(r["pro_israel"]), r["stance"],
+                int(r["gave_up"]), r["created_at"],
             ),
         )
         conn.commit()
@@ -97,18 +118,7 @@ def record(result: dict, db_path: Path | None = None) -> bool:
         conn.close()
 
 
-def mark_seen(post_id: str, db_path: Path | None = None) -> bool:
-    """Atomically claim a post id in the `seen` ledger.
-
-    Returns True if this is the FIRST time we've seen this id (claim succeeded —
-    the caller should process it), or False if it was already seen (skip it).
-
-    `INSERT OR IGNORE` + the PRIMARY KEY make this race-free: if two runs examine
-    the same id, exactly one gets True, so a post is never processed twice even
-    with overlapping/concurrent polls.
-    """
-    if not post_id:
-        return False
+def _sqlite_mark_seen(post_id: str, db_path: Path | None = None) -> bool:
     conn = _connect(db_path)
     try:
         cur = conn.execute(
@@ -121,13 +131,110 @@ def mark_seen(post_id: str, db_path: Path | None = None) -> bool:
         conn.close()
 
 
-def is_seen(post_id: str, db_path: Path | None = None) -> bool:
-    """Read-only check: has this id been examined before? (Does NOT claim it.)
-    Used by dry-runs, which must not consume the ledger."""
-    if not post_id:
-        return False
+def _sqlite_is_seen(post_id: str, db_path: Path | None = None) -> bool:
     conn = _connect(db_path)
     try:
         return conn.execute("SELECT 1 FROM seen WHERE id = ?", (post_id,)).fetchone() is not None
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# DynamoDB backend
+# ---------------------------------------------------------------------------
+
+def _ddb_table(name_env: str):
+    import boto3
+
+    region = os.environ.get("DDB_REGION") or os.environ.get("AWS_REGION")
+    return boto3.resource("dynamodb", region_name=region).Table(os.environ[name_env])
+
+
+def _ddb_record(result: dict) -> bool:
+    from botocore.exceptions import ClientError
+
+    r = _row_from_result(result)
+    # Store sources as a JSON string for parity with SQLite; booleans map to DDB
+    # BOOL, created_at to a Number.
+    item = {
+        "id": r["id"], "title": r["title"], "topic": r["topic"], "url": r["url"],
+        "original_post": r["original_post"], "generation": r["generation"],
+        "sources": json.dumps(r["sources"]),
+        "grounded": r["grounded"], "pro_israel": r["pro_israel"],
+        "stance": r["stance"], "gave_up": r["gave_up"],
+        "created_at": int(r["created_at"]),
+    }
+    try:
+        _ddb_table("DDB_RESPONSES_TABLE").put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(id)",  # idempotent like SQLite
+        )
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False  # duplicate id
+        raise
+
+
+def _ddb_mark_seen(post_id: str) -> bool:
+    """Atomic claim: conditional PutItem fails if the id already exists, so
+    exactly one concurrent caller gets True — the DynamoDB analogue of the
+    SQLite PRIMARY KEY race guarantee."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _ddb_table("DDB_SEEN_TABLE").put_item(
+            Item={"id": post_id, "first_seen_at": int(time.time())},
+            ConditionExpression="attribute_not_exists(id)",
+        )
+        return True  # claim succeeded (first sight)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False  # already seen
+        raise
+
+
+def _ddb_is_seen(post_id: str) -> bool:
+    resp = _ddb_table("DDB_SEEN_TABLE").get_item(Key={"id": post_id})
+    return "Item" in resp
+
+
+# ---------------------------------------------------------------------------
+# Public API — dispatches to the active backend
+# ---------------------------------------------------------------------------
+
+def record(result: dict, db_path: Path | None = None) -> bool:
+    """Insert one generated result. Returns True if inserted, False if the id was
+    already present (idempotent — safe to call on re-delivered posts).
+
+    `result` is the dict from `generate_pro_israel_response`, augmented with
+    `id`/`title`/`url`/`original_post`. The CMV topic is the post title.
+    """
+    if _use_dynamo():
+        return _ddb_record(result)
+    return _sqlite_record(result, db_path)
+
+
+def mark_seen(post_id: str, db_path: Path | None = None) -> bool:
+    """Atomically claim a post id in the `seen` ledger.
+
+    Returns True if this is the FIRST time we've seen this id (claim succeeded —
+    the caller should process it), or False if it was already seen (skip it).
+    Race-free on both backends (SQLite PRIMARY KEY / DynamoDB conditional put), so
+    a post is never processed twice even with overlapping/concurrent polls.
+    """
+    if not post_id:
+        return False
+    if _use_dynamo():
+        return _ddb_mark_seen(post_id)
+    return _sqlite_mark_seen(post_id, db_path)
+
+
+def is_seen(post_id: str, db_path: Path | None = None) -> bool:
+    """Read-only check: has this id been examined before? (Does NOT claim it.)
+    Used by dry-runs, which must not consume the ledger."""
+    if not post_id:
+        return False
+    if _use_dynamo():
+        return _ddb_is_seen(post_id)
+    return _sqlite_is_seen(post_id, db_path)
