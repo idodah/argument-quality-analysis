@@ -1,0 +1,51 @@
+# Keep the build context small and secret-free. The Dockerfile copies only
+# agents/, harvester/, and .chroma/ explicitly, but this guards against secrets
+# or bulk leaking into the context (and any future broad COPY).
+
+# Secrets — never into an image
+.env
+.env.*
+
+# VCS / CI / IDE
+.git
+.github
+.vscode
+.idea
+.claude
+
+# Local-only / generated
+run.py
+docs/
+data/
+full_raw_data/
+checkpoints/
+model.tar.gz
+harvester_tracking.db
+harvester_responses.jsonl
+*.log
+
+# Parts not in the runtime image
+models/
+preprocessing/
+rag/
+webapp/
+tests/
+infra/
+*.png
+
+# Python caches / build
+__pycache__/
+*.py[oc]
+.venv
+build/
+dist/
+*.egg-info
+
+# Datasets
+Webis-CMV-20/
+winning-args-corpus/
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.tsv
