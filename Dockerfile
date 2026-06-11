@@ -29,9 +29,12 @@ COPY pyproject.toml uv.lock README.md ./
 # Build the venv with ONLY the `runtime` dependency-group — `--only-group`
 # isolates it from the base deps, so torch/datasets/gradio/etc. never land in the
 # image (~129 packages vs. ~265 for the full project).
-RUN uv venv /opt/venv \
- && uv pip install --python /opt/venv/bin/python \
-      -r <(uv export --no-hashes --no-emit-project --only-group runtime --frozen)
+# Export to a file first (RUN uses /bin/sh, which has no <(...) process
+# substitution), then install from it.
+RUN uv export --no-hashes --no-emit-project --only-group runtime --frozen \
+      > /tmp/runtime-requirements.txt \
+ && uv venv /opt/venv \
+ && uv pip install --python /opt/venv/bin/python -r /tmp/runtime-requirements.txt
 
 # ---- final: slim runtime image ----
 FROM python:3.11-slim AS runtime
