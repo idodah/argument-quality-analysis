@@ -143,11 +143,20 @@ def _sqlite_is_seen(post_id: str, db_path: Path | None = None) -> bool:
 # DynamoDB backend
 # ---------------------------------------------------------------------------
 
-def _ddb_table(name_env: str):
-    import boto3
+_DDB_TABLES: dict = {}
 
-    region = os.environ.get("DDB_REGION") or os.environ.get("AWS_REGION")
-    return boto3.resource("dynamodb", region_name=region).Table(os.environ[name_env])
+
+def _ddb_table(name_env: str):
+    """Return a cached DynamoDB Table handle for the table named by `name_env`.
+    Cached because boto3 resource/client construction parses the service model —
+    too costly to redo on every mark_seen / record call within a run."""
+    table_name = os.environ[name_env]
+    if table_name not in _DDB_TABLES:
+        import boto3
+
+        region = os.environ.get("DDB_REGION") or os.environ.get("AWS_REGION")
+        _DDB_TABLES[table_name] = boto3.resource("dynamodb", region_name=region).Table(table_name)
+    return _DDB_TABLES[table_name]
 
 
 def _ddb_record(result: dict) -> bool:

@@ -88,20 +88,35 @@ class SageMakerRanker(Ranker):
         )
         return f"s3://{self.input_bucket}/{key}"
 
-    def _wait_for_output(self, output_s3_uri: str) -> dict:
-        bucket, _, key = output_s3_uri.replace("s3://", "").partition("/")
+    def _read_s3_json(self, s3_uri: str):
+        """Return the parsed JSON at `s3_uri`, or None if it doesn't exist yet."""
+        bucket, _, key = s3_uri.replace("s3://", "").partition("/")
+        try:
+            obj = self._s3.get_object(Bucket=bucket, Key=key)
+            return json.loads(obj["Body"].read())
+        except self._s3.exceptions.NoSuchKey:
+            return None
+
+    def _wait_for_output(self, output_s3_uri: str, failure_s3_uri: str | None) -> dict:
+        """Poll for the async result. On success SageMaker writes `output_s3_uri`;
+        on inference failure it writes `failure_s3_uri` and `output_s3_uri` never
+        appears — so we must watch BOTH, or a failed call would hang until the
+        timeout and then raise a misleading 'not ready' error."""
         deadline = time.time() + _ASYNC_TIMEOUT_S
         while True:
-            try:
-                obj = self._s3.get_object(Bucket=bucket, Key=key)
-                return json.loads(obj["Body"].read())
-            except self._s3.exceptions.NoSuchKey:
-                if time.time() >= deadline:
-                    raise TimeoutError(
-                        f"SageMaker async result not ready after {_ASYNC_TIMEOUT_S}s "
-                        f"({output_s3_uri})"
-                    )
-                time.sleep(_ASYNC_POLL_S)
+            result = self._read_s3_json(output_s3_uri)
+            if result is not None:
+                return result
+            if failure_s3_uri:
+                failure = self._read_s3_json(failure_s3_uri)
+                if failure is not None:
+                    raise RuntimeError(f"SageMaker async inference failed: {failure}")
+            if time.time() >= deadline:
+                raise TimeoutError(
+                    f"SageMaker async result not ready after {_ASYNC_TIMEOUT_S}s "
+                    f"({output_s3_uri})"
+                )
+            time.sleep(_ASYNC_POLL_S)
 
     def score_pair(self, topic: str, post: str, arg_a: str, arg_b: str) -> dict:
         payload = {"topic": topic, "post": post, "arg_a": arg_a, "arg_b": arg_b}
@@ -111,7 +126,7 @@ class SageMakerRanker(Ranker):
             InputLocation=input_uri,
             ContentType="application/json",
         )
-        result = self._wait_for_output(resp["OutputLocation"])
+        result = self._wait_for_output(resp["OutputLocation"], resp.get("FailureLocation"))
         # The handler returns the same shape as models.qwen.score_pair.
         return {
             "score_a": float(result["score_a"]),
