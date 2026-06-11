@@ -52,13 +52,18 @@ checkpoints/
 # CLI entrypoint (local-only)
 run.py
 
+# Local-only: Gradio web app, internal guidance, and security notes
+webapp/
+CLAUDE.md
+SECURITY.md
+
 # Local-only docs folder (the published graph lives at repo root: graph.png)
 docs/
 
-# Reddit harvester (PRAW-based; Reddit API access not available for this account).
-# The shared generation entrypoint it used lives in agents/generate.py, so the
-# web app and CLI do not depend on this folder.
-harvester/
+# Harvester runtime artifacts (the harvester/ source itself IS tracked)
+harvester_tracking.db
+harvester_responses.jsonl
+harvester_orch.log
 
 # Excluded scripts / dirs
 # summarize_gpt_4o_mini.py
