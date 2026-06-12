@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region. Must be one where Bedrock Nova 2 Lite is available."
+  description = "AWS region. Must be one where Bedrock Nova 2 Lite is available (in the EU that means eu-west-1 + an 'eu.'-prefixed inference-profile model id)."
   type        = string
-  default     = "us-east-1"
+  default     = "eu-west-1"
 }
 
 variable "name_prefix" {
@@ -41,9 +41,9 @@ variable "task_memory" {
 # ---- Bedrock --------------------------------------------------------------
 
 variable "bedrock_model_id" {
-  description = "Bedrock model id (or inference-profile id) the graph calls."
+  description = "Bedrock model id (or inference-profile id) the graph calls. In us-east-1/us-west-2 the bare id works; in the EU use the 'eu.'-prefixed cross-region inference profile."
   type        = string
-  default     = "amazon.nova-2-lite-v1:0"
+  default     = "eu.amazon.nova-2-lite-v1:0"
 }
 
 # ---- SageMaker ranker -----------------------------------------------------

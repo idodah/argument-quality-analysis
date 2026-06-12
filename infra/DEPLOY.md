@@ -15,6 +15,32 @@ names below are the real ones from the stack.
 
 ---
 
+## Values you must provide
+
+The single source of truth is **`terraform/terraform.tfvars.example`** — copy it
+to `terraform.tfvars` (gitignored) and fill it in. Summary of what's yours to set
+vs. what's automatic:
+
+| Value | Where it goes | Notes |
+|-------|---------------|-------|
+| `region` | tfvars | A **Bedrock Nova 2 Lite** region. Default `eu-west-1`. |
+| `bedrock_model_id` | tfvars | EU needs the **`eu.`-prefixed inference profile** (`eu.amazon.nova-2-lite-v1:0`); us-east-1/us-west-2 use the bare id. The IAM policy already allows both the model and profile ARN. |
+| `ranker_model_s3_uri` | tfvars | Set after phase-1 apply + artifact upload (§1–3). |
+| `ranker_image_uri` | tfvars | A SageMaker GPU DLC (torch 2.11.x) in `region`. |
+| `budget_alert_email` | tfvars | Budget-alert recipient. |
+| state bucket / lock table | `-backend-config` at `init` | Created in §0; not a stack resource. |
+| Tavily / ntfy / OpenAI keys | **Secrets Manager** (§5) | Never in tfvars or state. |
+| `AWS_ACCOUNT_ID` | — | **Automatic** (`aws_caller_identity`); never set it. |
+| `BEDROCK_REGION` / `SAGEMAKER_REGION` / `DDB_REGION` | — | **Automatic** — the code falls back to `AWS_REGION`, set from `region`. |
+| `SAGEMAKER_RANKER_ENDPOINT`, `*_INPUT_BUCKET`, `DDB_*_TABLE`, `BEDROCK_MODEL_ID`, `AWS_REGION` | — | **Automatic** — the task definition injects these from created resources. |
+
+> ⚠️ **Nova 2 Lite in the EU.** `eu-west-1` reaches Nova only via a cross-region
+> inference profile, so the model id must be `eu.amazon.nova-2-lite-v1:0` (not the
+> bare `amazon.…`). Confirm model access is enabled in the Bedrock console for
+> your region/profile before applying, or every LLM call 4xx's.
+
+---
+
 ## 0. Bootstrap the things Terraform can't create for itself
 
 1. **Pick a region** where **Bedrock Nova 2 Lite is available** and **request
