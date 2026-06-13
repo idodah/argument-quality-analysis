@@ -58,6 +58,7 @@ data "aws_iam_policy_document" "sagemaker_assume" {
 }
 
 resource "aws_iam_role" "sagemaker_exec" {
+  count              = var.enable_sagemaker_ranker ? 1 : 0
   name               = "${var.name_prefix}-sagemaker-exec"
   assume_role_policy = data.aws_iam_policy_document.sagemaker_assume.json
 }
@@ -98,16 +99,18 @@ data "aws_iam_policy_document" "sagemaker_exec" {
 }
 
 resource "aws_iam_role_policy" "sagemaker_exec" {
+  count  = var.enable_sagemaker_ranker ? 1 : 0
   name   = "exec"
-  role   = aws_iam_role.sagemaker_exec.id
+  role   = aws_iam_role.sagemaker_exec[0].id
   policy = data.aws_iam_policy_document.sagemaker_exec.json
 }
 
 # ---- Model + endpoint -----------------------------------------------------
 
 resource "aws_sagemaker_model" "ranker" {
+  count              = var.enable_sagemaker_ranker ? 1 : 0
   name               = "${var.name_prefix}-ranker"
-  execution_role_arn = aws_iam_role.sagemaker_exec.arn
+  execution_role_arn = aws_iam_role.sagemaker_exec[0].arn
 
   primary_container {
     image          = var.ranker_image_uri
@@ -120,11 +123,12 @@ resource "aws_sagemaker_model" "ranker" {
 }
 
 resource "aws_sagemaker_endpoint_configuration" "ranker" {
-  name = "${var.name_prefix}-ranker"
+  count = var.enable_sagemaker_ranker ? 1 : 0
+  name  = "${var.name_prefix}-ranker"
 
   production_variants {
     variant_name           = "primary"
-    model_name             = aws_sagemaker_model.ranker.name
+    model_name             = aws_sagemaker_model.ranker[0].name
     instance_type          = var.ranker_instance_type
     initial_instance_count = 1
   }
@@ -138,8 +142,9 @@ resource "aws_sagemaker_endpoint_configuration" "ranker" {
 }
 
 resource "aws_sagemaker_endpoint" "ranker" {
+  count                = var.enable_sagemaker_ranker ? 1 : 0
   name                 = "${var.name_prefix}-ranker"
-  endpoint_config_name = aws_sagemaker_endpoint_configuration.ranker.name
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.ranker[0].name
 }
 
 # ---- Scale-to-zero autoscaling -------------------------------------------
@@ -147,18 +152,20 @@ resource "aws_sagemaker_endpoint" "ranker" {
 # cost), then scale up on a backlog. Target tracking on the approximate backlog.
 
 resource "aws_appautoscaling_target" "ranker" {
+  count              = var.enable_sagemaker_ranker ? 1 : 0
   service_namespace  = "sagemaker"
-  resource_id        = "endpoint/${aws_sagemaker_endpoint.ranker.name}/variant/primary"
+  resource_id        = "endpoint/${aws_sagemaker_endpoint.ranker[0].name}/variant/primary"
   scalable_dimension = "sagemaker:variant:DesiredInstanceCount"
   min_capacity       = 0
   max_capacity       = 2
 }
 
 resource "aws_appautoscaling_policy" "ranker" {
+  count              = var.enable_sagemaker_ranker ? 1 : 0
   name               = "${var.name_prefix}-ranker-scale"
-  service_namespace  = aws_appautoscaling_target.ranker.service_namespace
-  resource_id        = aws_appautoscaling_target.ranker.resource_id
-  scalable_dimension = aws_appautoscaling_target.ranker.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ranker[0].service_namespace
+  resource_id        = aws_appautoscaling_target.ranker[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.ranker[0].scalable_dimension
   policy_type        = "TargetTrackingScaling"
 
   target_tracking_scaling_policy_configuration {
@@ -172,7 +179,7 @@ resource "aws_appautoscaling_policy" "ranker" {
       statistic   = "Average"
       dimensions {
         name  = "EndpointName"
-        value = aws_sagemaker_endpoint.ranker.name
+        value = aws_sagemaker_endpoint.ranker[0].name
       }
     }
   }

@@ -48,14 +48,22 @@ variable "bedrock_model_id" {
 
 # ---- SageMaker ranker -----------------------------------------------------
 
+variable "enable_sagemaker_ranker" {
+  description = "Deploy the SageMaker GPU ranker endpoint. Set false to skip it (no GPU cost) — the task then runs with RANKER_DISABLED=1 and the A/B elimination defaults to side A. The ranker model/image vars are unused when false."
+  type        = bool
+  default     = true
+}
+
 variable "ranker_model_s3_uri" {
-  description = "S3 URI of the packaged Qwen ranker model.tar.gz (built by infra/sagemaker/package_model.sh)."
+  description = "S3 URI of the packaged Qwen ranker model.tar.gz (built by infra/sagemaker/package_model.sh). Unused if enable_sagemaker_ranker=false."
   type        = string
+  default     = ""
 }
 
 variable "ranker_image_uri" {
-  description = "ECR DLC image URI for the SageMaker ranker container (a PyTorch GPU inference DLC whose torch matches uv.lock)."
+  description = "ECR DLC image URI for the SageMaker ranker container (a PyTorch GPU inference DLC). Unused if enable_sagemaker_ranker=false."
   type        = string
+  default     = ""
 }
 
 variable "ranker_instance_type" {
