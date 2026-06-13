@@ -30,6 +30,7 @@ rag/             # pro-Israel RAG-corpus pipeline (scrape -> classify -> ingest)
 models/          # TF-IDF baselines + Qwen3-8B pair-wise ranker
 agents/          # LangGraph refinement workflow + retrieval backends + generate entrypoint
 harvester/       # live multi-platform detector -> draft -> notify (see "Harvester")
+infra/           # AWS deployment: Terraform stack + SageMaker packaging (see "Deployment")
 tests/           # offline graph-wiring, helper-unit, and import smoke tests
 schemas.py       # Pydantic types shared across the pipelines
 graph.png        # rendered topology of the agentic workflow (see "Agentic refinement")
@@ -49,11 +50,19 @@ uv sync
 Create a `.env` file at the repo root with whichever keys you need:
 
 ```
-OPENAI_API_KEY=...
+OPENAI_API_KEY=...          # OpenAI embeddings (retrieval / similarity filter)
+AWS_REGION=...              # Bedrock region for the LLM (e.g. eu-west-1)
+BEDROCK_MODEL_ID=...        # optional, defaults to amazon.nova-2-lite-v1:0
 TAVILY_API_KEY=...          # optional, enables the web-search retrieval arm
 HF_TOKEN=...                # optional, for dataset/model uploads
 RANKER_PATH=...             # Qwen ranker checkpoint, for the agentic graph
 ```
+
+The agent graph's LLM calls go through **Amazon Bedrock** (`agents/llm.py` →
+`ChatBedrockConverse`, Nova 2 Lite by default); credentials come from the
+standard AWS chain (a task role on Fargate, or your env/profile locally).
+OpenAI is now used **only for embeddings** (the Chroma retriever and the
+preprocessing similarity filter).
 
 ### Observability (optional)
 
@@ -297,8 +306,8 @@ reviews and decides whether to post.
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
   │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
-  │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py (SQLite) │
-  │  dedup + age + sort │   │ ─► agents.generate       │   │                      │
+  │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py          │
+  │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB)  │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
             ▲
    fediverse/ adapters (Lemmy, PieFed, Reddit) — also exposed read-only via fediverse_mcp.py
@@ -331,11 +340,13 @@ notify. If nothing is new, it does nothing.
 
 Each post is answered **at most once, ever**. On first sight — before any
 classify/generate work — its **canonical id** (the ActivityPub `ap_id`, or the
-Reddit permalink) is claimed in a SQLite `seen` ledger (atomic `INSERT OR
-IGNORE`, race-safe). The *same federated post on Lemmy and PieFed* shares a
-canonical id, so it's answered once. `--dry-run` only peeks, never consumes the
-ledger. The ledger persists in `harvester_tracking.db` (`HARVESTER_DB`); delete
-it to reset.
+Reddit permalink) is claimed in a `seen` ledger. The claim is atomic and
+race-safe in both backends: an `INSERT OR IGNORE` in SQLite, or a conditional
+`PutItem` (`attribute_not_exists`) in DynamoDB. The *same federated post on
+Lemmy and PieFed* shares a canonical id, so it's answered once. `--dry-run` only
+peeks, never consumes the ledger. Locally the ledger persists in
+`harvester_tracking.db` (`HARVESTER_DB`); on AWS it lives in DynamoDB. Delete the
+file (or the table items) to reset.
 
 ### Files
 
@@ -347,7 +358,7 @@ it to reset.
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | Cheap keyword prefilter, then an LLM anti-Israel stance classifier. |
 | `notify.py` | Send one ntfy push per generated response (the only outbound write). |
-| `tracking.py` | SQLite: the `seen` dedup ledger + a `responses` store of generated rebuttals. |
+| `tracking.py` | The `seen` dedup ledger + a `responses` store of generated rebuttals. SQLite locally; DynamoDB on AWS when `DDB_SEEN_TABLE`/`DDB_RESPONSES_TABLE` are set. |
 
 **Cross-section dependency:** the only calls outside `harvester/` are to
 `agents/` (`orchestrate.py` → `agents.generate`, `classify.py` → `agents.llm`);
@@ -369,6 +380,41 @@ deterministic loop.
 The pipeline ends at **notifying you** — it never posts to Reddit/Lemmy/PieFed.
 Auto-posting political rebuttals violates these platforms' rules and risks bans,
 so a human reviews and posts manually.
+
+## Deployment
+
+The harvester runs on AWS as a scheduled, serverless job, defined entirely as
+code in `infra/` (Terraform + GitHub Actions — no click-ops).
+
+```
+EventBridge Scheduler  ──►  ECS Fargate (one-shot task)  ──►  Amazon Bedrock (Nova 2 Lite)
+   (rate(1 hour))            harvester image from ECR           DynamoDB (seen / responses)
+                                    │                           SageMaker async GPU endpoint
+                                    └─ secrets from Secrets Manager   (Qwen ranker, optional)
+```
+
+- **Compute** — the one-shot `harvester.orchestrate` runs as a CPU-only **Fargate**
+  task, kicked off hourly by **EventBridge Scheduler**. No always-on server.
+- **LLM** — the agent graph calls **Amazon Bedrock** (Nova 2 Lite); in the EU
+  that's a cross-region inference profile (`eu.amazon.nova-2-lite-v1:0`).
+- **Ranker** — the QLoRA Qwen ranker is packaged for a **SageMaker** async GPU
+  endpoint that scales to zero (`infra/sagemaker/`). It's gated behind
+  `enable_sagemaker_ranker` and **disabled by default** (the GPU cost isn't
+  justified for a demo); the task then runs `RANKER_DISABLED=1` and the A/B
+  elimination defaults to side A.
+- **State** — the dedup ledger and response store move from SQLite to **DynamoDB**.
+- **Secrets** — API keys live in **Secrets Manager** and are injected into the
+  task at runtime; none are baked into the image or Terraform state.
+- **Network** — a dedicated **VPC** with private subnets + NAT and VPC endpoints;
+  the task has no public IP.
+- **CI/CD** — **GitHub Actions** builds/pushes the image to **ECR** and runs
+  Terraform, authenticating via **OIDC** (no static AWS keys in CI).
+- **Cost guards** — AWS **Budgets** (a Bedrock+SageMaker alarm and a total-account
+  hard cap, alerting at 50/80/100%), a daily **Lambda** cost-summary email, and a
+  `pause.sh` kill-switch. In-app `--max-generations` / `--max-age-hours` bound
+  paid work per run.
+
+See `infra/terraform/` for the stack.
 
 ## Security
 

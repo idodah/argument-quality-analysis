@@ -32,6 +32,7 @@ model.tar.gz
 *.xls
 *.parquet
 *.tsv
+*.pdf
 
 # Jupyter
 .ipynb_checkpoints/
@@ -60,6 +61,7 @@ webapp/
 CLAUDE.md
 SECURITY.md
 
+
 # Local-only docs folder (the published graph lives at repo root: graph.png)
 docs/
 
@@ -76,6 +78,11 @@ harvester_orch.log
 *.tfvars
 !*.tfvars.example
 crash.log
+
+# Local-only infra docs (operator notes / deploy runbook)
+infra/terraform/README.md
+infra/sagemaker/README.md
+infra/DEPLOY.md
 
 # Excluded scripts / dirs
 # summarize_gpt_4o_mini.py
