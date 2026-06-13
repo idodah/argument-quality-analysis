@@ -37,6 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The default `docker` buildx driver can't export the gha cache; the
+      # `docker-container` driver this sets up can.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
