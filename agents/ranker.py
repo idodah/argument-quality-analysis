@@ -38,6 +38,21 @@ class Ranker:
         raise NotImplementedError
 
 
+class DisabledRanker(Ranker):
+    """No-op ranker for deployments without the Qwen endpoint (RANKER_DISABLED=1).
+
+    Picks side A unconditionally (a fixed, cheap choice). The A-vs-B elimination
+    is the only place the ranker is consulted, and the downstream stance gate
+    overrides a bad pick by regenerating — so the graph stays correct, it just
+    loses the persuasiveness tie-break. Lets the CPU-only image run the full
+    Bedrock pipeline with no GPU/SageMaker cost.
+    """
+
+    def score_pair(self, topic: str, post: str, arg_a: str, arg_b: str) -> dict:
+        print("[ranker] DISABLED (RANKER_DISABLED) — defaulting to side A, no scoring.")
+        return {"score_a": 0.0, "score_b": 0.0, "winner": "A", "prob_a_better": 0.5}
+
+
 class LocalRanker(Ranker):
     """Loads the QLoRA-fine-tuned Qwen ranker in-process and scores locally."""
 
@@ -138,10 +153,13 @@ class SageMakerRanker(Ranker):
 
 def get_ranker() -> Ranker:
     """Return the singleton ranker, choosing the backend from the environment:
+    disabled if `RANKER_DISABLED` is truthy (no GPU/endpoint — defaults to A),
     SageMaker if `SAGEMAKER_RANKER_ENDPOINT` is set, else the in-process load."""
     global _RANKER
     if _RANKER is None:
-        if os.environ.get("SAGEMAKER_RANKER_ENDPOINT"):
+        if os.environ.get("RANKER_DISABLED", "").lower() in ("1", "true", "yes"):
+            _RANKER = DisabledRanker()
+        elif os.environ.get("SAGEMAKER_RANKER_ENDPOINT"):
             _RANKER = SageMakerRanker()
         else:
             _RANKER = LocalRanker()

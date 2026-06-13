@@ -74,22 +74,27 @@ data "aws_iam_policy_document" "task" {
     ]
   }
 
-  # SageMaker: invoke ONLY the ranker async endpoint.
-  statement {
-    sid       = "SageMakerInvokeRanker"
-    actions   = ["sagemaker:InvokeEndpointAsync"]
-    resources = [aws_sagemaker_endpoint.ranker.arn]
+  # SageMaker: invoke ONLY the ranker async endpoint + its async-IO S3 prefixes.
+  # Both are omitted when the ranker endpoint is disabled (RANKER_DISABLED path).
+  dynamic "statement" {
+    for_each = var.enable_sagemaker_ranker ? [1] : []
+    content {
+      sid       = "SageMakerInvokeRanker"
+      actions   = ["sagemaker:InvokeEndpointAsync"]
+      resources = [aws_sagemaker_endpoint.ranker[0].arn]
+    }
   }
 
-  # The ranker async flow uploads request payloads and reads results from the
-  # ranker bucket (agents.ranker.SageMakerRanker).
-  statement {
-    sid     = "RankerBucketIO"
-    actions = ["s3:PutObject", "s3:GetObject"]
-    resources = [
-      "${aws_s3_bucket.ranker.arn}/ranker-requests/*",
-      "${aws_s3_bucket.ranker.arn}/async/*",
-    ]
+  dynamic "statement" {
+    for_each = var.enable_sagemaker_ranker ? [1] : []
+    content {
+      sid     = "RankerBucketIO"
+      actions = ["s3:PutObject", "s3:GetObject"]
+      resources = [
+        "${aws_s3_bucket.ranker.arn}/ranker-requests/*",
+        "${aws_s3_bucket.ranker.arn}/async/*",
+      ]
+    }
   }
 
   # DynamoDB: only the two tables, only the ops tracking.py uses.
@@ -122,15 +127,22 @@ resource "aws_iam_role_policy" "task" {
 locals {
   image = "${aws_ecr_repository.harvester.repository_url}:${var.image_tag}"
 
-  # Non-secret runtime config passed as plain env.
-  environment = [
+  # Non-secret runtime config passed as plain env. When the SageMaker ranker is
+  # enabled, point the code at the endpoint; when disabled, set RANKER_DISABLED so
+  # agents.ranker uses the no-op ranker (defaults A-vs-B to A; no GPU needed).
+  ranker_env = var.enable_sagemaker_ranker ? [
+    { name = "SAGEMAKER_RANKER_ENDPOINT", value = aws_sagemaker_endpoint.ranker[0].name },
+    { name = "SAGEMAKER_RANKER_INPUT_BUCKET", value = aws_s3_bucket.ranker.id },
+    ] : [
+    { name = "RANKER_DISABLED", value = "1" },
+  ]
+
+  environment = concat([
     { name = "AWS_REGION", value = var.region },
     { name = "BEDROCK_MODEL_ID", value = var.bedrock_model_id },
-    { name = "SAGEMAKER_RANKER_ENDPOINT", value = aws_sagemaker_endpoint.ranker.name },
-    { name = "SAGEMAKER_RANKER_INPUT_BUCKET", value = aws_s3_bucket.ranker.id },
     { name = "DDB_SEEN_TABLE", value = aws_dynamodb_table.seen.name },
     { name = "DDB_RESPONSES_TABLE", value = aws_dynamodb_table.responses.name },
-  ]
+  ], local.ranker_env)
 
   # Secrets injected as env from Secrets Manager (resolved by the execution role).
   # Keys here must match what the code reads; the secret VALUE is the raw key.

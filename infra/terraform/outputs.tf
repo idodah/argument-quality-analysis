@@ -9,8 +9,8 @@ output "ranker_bucket" {
 }
 
 output "sagemaker_endpoint_name" {
-  description = "Ranker async endpoint name (SAGEMAKER_RANKER_ENDPOINT)."
-  value       = aws_sagemaker_endpoint.ranker.name
+  description = "Ranker async endpoint name (SAGEMAKER_RANKER_ENDPOINT), or null if the ranker is disabled."
+  value       = var.enable_sagemaker_ranker ? aws_sagemaker_endpoint.ranker[0].name : null
 }
 
 output "dynamodb_tables" {
