@@ -151,15 +151,18 @@ resource "aws_vpc_endpoint" "dynamodb" {
 }
 
 # Interface endpoints (ENI per AZ, private DNS): the runtime APIs the task calls.
+# sagemaker-runtime is only added when the ranker endpoint is deployed (and the
+# task actually calls SageMaker) — otherwise it's omitted.
 locals {
-  interface_endpoints = {
-    bedrock_runtime   = "com.amazonaws.${var.region}.bedrock-runtime"
+  interface_endpoints = merge({
+    bedrock_runtime = "com.amazonaws.${var.region}.bedrock-runtime"
+    ecr_api         = "com.amazonaws.${var.region}.ecr.api"
+    ecr_dkr         = "com.amazonaws.${var.region}.ecr.dkr"
+    secretsmanager  = "com.amazonaws.${var.region}.secretsmanager"
+    logs            = "com.amazonaws.${var.region}.logs"
+    }, var.enable_sagemaker_ranker ? {
     sagemaker_runtime = "com.amazonaws.${var.region}.sagemaker-runtime"
-    ecr_api           = "com.amazonaws.${var.region}.ecr.api"
-    ecr_dkr           = "com.amazonaws.${var.region}.ecr.dkr"
-    secretsmanager    = "com.amazonaws.${var.region}.secretsmanager"
-    logs              = "com.amazonaws.${var.region}.logs"
-  }
+  } : {})
 }
 
 resource "aws_vpc_endpoint" "interface" {
