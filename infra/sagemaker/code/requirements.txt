@@ -1,0 +1,16 @@
+# Extra deps installed into the SageMaker inference container, on top of the
+# PyTorch DLC base image (which already provides a matching torch + CUDA).
+# Versions pinned to the set the ranker was validated with (uv.lock), so the
+# deployed endpoint scores identically to the local LocalRanker.
+#
+# NOTE: do NOT pin torch here — it ships in the base image; pinning a different
+# torch risks a CUDA mismatch. Pick a DLC whose torch matches uv.lock (2.11.x).
+transformers==5.8.0
+peft==0.19.1
+bitsandbytes==0.49.2
+accelerate==1.13.0
+safetensors==0.7.0
+huggingface-hub==1.14.0
+# datasets is imported at the top of models/data.py but unused by the scoring
+# path; pinned so the import doesn't pull an incompatible version.
+datasets==4.8.5

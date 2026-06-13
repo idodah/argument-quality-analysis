@@ -24,11 +24,11 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pandas>=3.0.2",
     "peft>=0.19.1",
-    "praw>=7.7.0",
     "requests>=2.31.0",
     "xgboost>=3.2.0",
     "zenodo-get>=3.0.0",
     "weave>=0.52.41",
+    "langchain-aws>=1.5.1",
 ]
 
 [dependency-groups]
@@ -37,6 +37,34 @@ dev = [
     "isort>=8.0.1",
     "pypdf>=6.12.2",
     "pytest>=8.0.0",
+]
+
+# The minimal set the DEPLOYED harvester + agent graph import at runtime, for the
+# Fargate image. A dependency-group (not an extra) so `uv export --only-group
+# runtime` exports JUST these — isolating them from the base `dependencies`
+# (which still carries the training/baseline/webapp stack for local dev).
+# Excludes torch/peft/bitsandbytes/datasets (training + in-process ranker),
+# xgboost/convokit/pandas (baselines/preprocessing), gradio (webapp), and
+# wandb/weave (training observability): the scheduled job touches none of these
+# now that the Qwen ranker is on SageMaker (agents.ranker's models.qwen import is
+# lazy and never runs when SAGEMAKER_RANKER_ENDPOINT is set).
+# Keep this in sync with the runtime imports of harvester/ and agents/.
+runtime = [
+    "dotenv>=0.9.9",
+    "langchain>=1.3.1",
+    "langchain-community>=0.3.0",
+    "langchain-core>=1.0.0",
+    "langchain-aws>=1.5.1",
+    "langchain-chroma>=0.2.0",
+    "langchain-openai>=1.2.1",      # OpenAI embeddings for the local-retrieval arm
+    "langgraph>=1.2.0",
+    "langsmith>=0.1.0",
+    "chromadb>=0.5.0",
+    "openai>=2.36.0",
+    "tavily-python>=0.5.0",
+    "mcp>=1.2.0",
+    "requests>=2.31.0",
+    "boto3>=1.43.0",                # Bedrock / SageMaker / DynamoDB clients
 ]
 
 [tool.pytest.ini_options]

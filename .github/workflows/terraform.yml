@@ -1,0 +1,73 @@
+name: terraform
+
+# Plan on PRs that touch infra/terraform/, apply on merge to main.
+# Auth is via GitHub OIDC -> the cmv-harvester-ci role (no static AWS keys).
+
+on:
+  pull_request:
+    paths: ["infra/terraform/**"]
+  push:
+    branches: [main]
+    paths: ["infra/terraform/**"]
+
+permissions:
+  id-token: write   # required to request the OIDC token
+  contents: read
+  pull-requests: write  # to post the plan summary on the PR
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight apply
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_WORKING_DIR: infra/terraform
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+
+      - name: Validate
+        run: terraform validate
+
+      # tfvars come from repo variables/secrets; the two required inputs plus the
+      # image tag being deployed. Secret VALUES are never echoed.
+      - name: Plan
+        id: plan
+        run: |
+          terraform plan -no-color -input=false \
+            -var "region=${{ vars.AWS_REGION }}" \
+            -var "ranker_model_s3_uri=${{ vars.RANKER_MODEL_S3_URI }}" \
+            -var "ranker_image_uri=${{ vars.RANKER_IMAGE_URI }}" \
+            -var "budget_alert_email=${{ vars.BUDGET_ALERT_EMAIL }}" \
+            -var "image_tag=${{ github.sha }}" \
+            -out=tfplan
+
+      - name: Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -no-color -input=false -auto-approve tfplan

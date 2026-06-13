@@ -23,6 +23,9 @@ full_raw_data/
 # Model checkpoints
 checkpoints/
 
+# SageMaker packaging artifact (built by infra/sagemaker/package_model.sh)
+model.tar.gz
+
 # Data files
 *.csv
 *.xlsx
@@ -64,6 +67,15 @@ docs/
 harvester_tracking.db
 harvester_responses.jsonl
 harvester_orch.log
+
+# Terraform local state / provider cache (the .tf source + .terraform.lock.hcl
+# provider lock ARE tracked; everything below is local-only or secret).
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
 
 # Excluded scripts / dirs
 # summarize_gpt_4o_mini.py

@@ -1,0 +1,75 @@
+name: deploy-image
+
+# Build the harvester runtime image and push it to ECR on merges to main that
+# touch the app code or the Dockerfile, OR on manual dispatch (build from any
+# branch, e.g. before merging). Tags with the commit SHA (immutable, what the
+# task definition pins) and `latest`. OIDC auth, no static keys.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Extra image tag to push (in addition to the commit sha and latest)."
+        required: false
+        default: "bootstrap"
+  push:
+    branches: [main]
+    paths:
+      - "agents/**"
+      - "harvester/**"
+      - ".chroma/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/deploy-image.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # .chroma/ is a generated, gitignored artifact (not in the checkout). Pull
+      # the prebuilt corpus from S3 so `COPY .chroma/` in the Dockerfile finds it.
+      # Falls back to an empty dir so the build still succeeds if the corpus isn't
+      # published yet (the retriever tolerates an empty corpus).
+      - name: Fetch RAG corpus
+        run: |
+          mkdir -p .chroma
+          if [ -n "${{ vars.CHROMA_S3_URI }}" ]; then
+            aws s3 sync "${{ vars.CHROMA_S3_URI }}" .chroma/ --only-show-errors
+          else
+            echo "CHROMA_S3_URI not set — building with an empty corpus."
+          fi
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # sha + latest always; plus the manual-dispatch tag (e.g. bootstrap) so
+          # a manual run produces the tag the task definition pins.
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.event.inputs.tag || 'main' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
