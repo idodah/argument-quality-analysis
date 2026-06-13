@@ -88,6 +88,12 @@ variable "monthly_budget_usd" {
   default     = 100
 }
 
+variable "total_budget_usd" {
+  description = "Hard cap (USD) for TOTAL account spend this month — the trial cost-guard. Covers NAT/everything, not just Bedrock/SageMaker. Alerts at 50/80/100%."
+  type        = number
+  default     = 20
+}
+
 variable "budget_alert_email" {
   description = "Email to notify when the budget threshold is crossed."
   type        = string

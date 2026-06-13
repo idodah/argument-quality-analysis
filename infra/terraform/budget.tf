@@ -45,3 +45,26 @@ resource "aws_budgets_budget" "bedrock_sagemaker" {
     subscriber_sns_topic_arns = [aws_sns_topic.budget.arn]
   }
 }
+
+# Total-account hard cap — the trial cost-guard. Unlike the Bedrock+SageMaker
+# budget above, this covers EVERYTHING (NAT, data transfer, etc.), so a runaway
+# cost in any service trips it. Email at 50% (early heads-up), 80%, and 100%.
+resource "aws_budgets_budget" "total" {
+  name         = "${var.name_prefix}-total"
+  budget_type  = "COST"
+  limit_amount = tostring(var.total_budget_usd)
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  dynamic "notification" {
+    for_each = [50, 80, 100]
+    content {
+      comparison_operator        = "GREATER_THAN"
+      threshold                  = notification.value
+      threshold_type             = "PERCENTAGE"
+      notification_type          = "ACTUAL"
+      subscriber_email_addresses = [var.budget_alert_email]
+      subscriber_sns_topic_arns  = [aws_sns_topic.budget.arn]
+    }
+  }
+}
