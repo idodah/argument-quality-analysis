@@ -372,7 +372,7 @@ so a human reviews and posts manually.
 
 ## Security
 
-The harvester ingests **100% attacker-authored** text (any Reddit/Lemmy/PieFed
+The harvester ingests **attacker-authored** text (any Reddit/Lemmy/PieFed
 user can craft a post), so it ships with input-trust-boundary defenses:
 
 - **Prompt injection** — untrusted title/body are fenced and neutralized
