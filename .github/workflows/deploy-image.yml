@@ -1,10 +1,17 @@
 name: deploy-image
 
 # Build the harvester runtime image and push it to ECR on merges to main that
-# touch the app code or the Dockerfile. Tags with the commit SHA (immutable, what
-# the task definition pins) and `latest`. OIDC auth, no static keys.
+# touch the app code or the Dockerfile, OR on manual dispatch (build from any
+# branch, e.g. before merging). Tags with the commit SHA (immutable, what the
+# task definition pins) and `latest`. OIDC auth, no static keys.
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Extra image tag to push (in addition to the commit sha and latest)."
+        required: false
+        default: "bootstrap"
   push:
     branches: [main]
     paths:
@@ -58,8 +65,11 @@ jobs:
         with:
           context: .
           push: true
+          # sha + latest always; plus the manual-dispatch tag (e.g. bootstrap) so
+          # a manual run produces the tag the task definition pins.
           tags: |
             ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
             ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.event.inputs.tag || 'main' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
