@@ -62,16 +62,32 @@ resource "aws_iam_role" "task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
 
+locals {
+  # A cross-region inference profile (e.g. "eu.amazon.nova-2-lite-v1:0") fans the
+  # request out to the underlying foundation model in ANY region of its geo, and
+  # the InvokeModel authz is checked against the BARE model id in whichever region
+  # actually serves it — not the profile id. So we must allow: the profile ARN,
+  # AND the bare foundation-model in every region the geo can route to.
+  bedrock_is_profile = length(regexall("^[a-z]+\\.", var.bedrock_model_id)) > 0
+  bedrock_bare_model = local.bedrock_is_profile ? join(".", slice(split(".", var.bedrock_model_id), 1, length(split(".", var.bedrock_model_id)))) : var.bedrock_model_id
+  # EU geo regions Nova cross-region inference can land in.
+  bedrock_eu_regions = ["eu-west-1", "eu-west-3", "eu-central-1", "eu-north-1", "eu-south-1", "eu-south-2", "eu-central-2"]
+  bedrock_fm_arns = [
+    for r in local.bedrock_eu_regions :
+    "arn:aws:bedrock:${r}::foundation-model/${local.bedrock_bare_model}"
+  ]
+  bedrock_profile_arns = local.bedrock_is_profile ? [
+    "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
+  ] : []
+}
+
 data "aws_iam_policy_document" "task" {
-  # Bedrock: invoke ONLY the configured model (plus its inference profile, if the
-  # id is a profile that fans out to a foundation model in this region).
+  # Bedrock: the inference profile + the underlying foundation model across the EU
+  # regions the profile can route to (see locals above).
   statement {
-    sid     = "BedrockInvokeModel"
-    actions = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-    resources = [
-      "arn:aws:bedrock:${var.region}::foundation-model/${var.bedrock_model_id}",
-      "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
-    ]
+    sid       = "BedrockInvokeModel"
+    actions   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+    resources = concat(local.bedrock_fm_arns, local.bedrock_profile_arns)
   }
 
   # SageMaker: invoke ONLY the ranker async endpoint + its async-IO S3 prefixes.
