@@ -62,7 +62,9 @@ COPY --from=builder /opt/venv /opt/venv
 # tolerates an empty corpus), so the build must not hard-fail on it.
 COPY agents/   ./agents/
 COPY harvester/ ./harvester/
-COPY .chroma/  ./.chroma/
+# Chroma opens its SQLite store read-WRITE (lock/WAL files) even for queries, so
+# the corpus dir must be owned by the runtime user, not root.
+COPY --chown=app:app .chroma/ ./.chroma/
 
 USER app
 

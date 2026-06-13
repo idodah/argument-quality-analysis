@@ -15,7 +15,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-CHROMA_DIR = Path(__file__).resolve().parent.parent / ".chroma"
+# Chroma opens its SQLite store read-WRITE even for queries (lock/WAL files), so
+# the corpus dir must be writable. Overridable via CHROMA_DIR so a read-only
+# deploy (e.g. a baked-in image) can point at a writable copy.
+CHROMA_DIR = Path(os.environ.get("CHROMA_DIR") or (Path(__file__).resolve().parent.parent / ".chroma"))
 COLLECTION_NAME = "pro_israel_corpus"
 
 
