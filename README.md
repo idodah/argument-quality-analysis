@@ -47,7 +47,7 @@ This project uses [uv](https://github.com/astral-sh/uv) and requires Python
 uv sync
 ```
 
-Create a `.env` file at the repo root with whichever keys you need:
+Create a `.env` file at the repo root with whichever keys are needed:
 
 ```
 OPENAI_API_KEY=...          # OpenAI embeddings (retrieval / similarity filter)
@@ -60,7 +60,7 @@ RANKER_PATH=...             # Qwen ranker checkpoint, for the agentic graph
 
 The agent graph's LLM calls go through **Amazon Bedrock** (`agents/llm.py` →
 `ChatBedrockConverse`, Nova 2 Lite by default); credentials come from the
-standard AWS chain (a task role on Fargate, or your env/profile locally).
+standard AWS chain (a task role on Fargate, or the local env/profile).
 OpenAI is now used **only for embeddings** (the Chroma retriever and the
 preprocessing similarity filter).
 
@@ -377,7 +377,7 @@ deterministic loop.
 
 ### Out of scope: auto-posting
 
-The pipeline ends at **notifying you** — it never posts to Reddit/Lemmy/PieFed.
+The pipeline ends at **notifying the operator** — it never posts to Reddit/Lemmy/PieFed.
 Auto-posting political rebuttals violates these platforms' rules and risks bans,
 so a human reviews and posts manually.
 
