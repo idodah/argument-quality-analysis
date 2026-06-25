@@ -428,7 +428,5 @@ user can craft a post), so it ships with input-trust-boundary defenses:
 - **SSRF** — `harvester/fediverse/base.py::assert_safe_url()` blocks outbound
   requests to private / loopback / link-local / reserved IPs (every resolved
   address checked, defeating DNS rebinding), guarding the cloud metadata endpoint.
-- **Cost abuse** — `--max-generations` and `--max-age-hours` bound paid work per
-  run, and the `seen` ledger prevents re-answering.
 
 `tests/test_security.py` covers the SSRF guard and the injection neutralizer.
