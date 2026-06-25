@@ -47,7 +47,7 @@ This project uses [uv](https://github.com/astral-sh/uv) and requires Python
 uv sync
 ```
 
-Create a `.env` file at the repo root with whichever keys you need:
+Create a `.env` file at the repo root with whichever keys are needed:
 
 ```
 OPENAI_API_KEY=...          # OpenAI embeddings (retrieval / similarity filter)
@@ -60,7 +60,7 @@ RANKER_PATH=...             # Qwen ranker checkpoint, for the agentic graph
 
 The agent graph's LLM calls go through **Amazon Bedrock** (`agents/llm.py` →
 `ChatBedrockConverse`, Nova 2 Lite by default); credentials come from the
-standard AWS chain (a task role on Fargate, or your env/profile locally).
+standard AWS chain (a task role on Fargate, or the local env/profile).
 OpenAI is now used **only for embeddings** (the Chroma retriever and the
 preprocessing similarity filter).
 
@@ -250,7 +250,7 @@ Four patterns are fused into the graph:
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
-- **skip_retrieval** — the router's `none` arm: adds no new documents and
+- **router `none` arm** — routes straight to `reflect`: adds no new documents and
   preserves the existing pool, so refinement still runs (and can cite
   previously-grounded facts) without fetching fresh evidence this pass.
 - **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
@@ -377,7 +377,7 @@ deterministic loop.
 
 ### Out of scope: auto-posting
 
-The pipeline ends at **notifying you** — it never posts to Reddit/Lemmy/PieFed.
+The pipeline ends at **notifying the operator** — it never posts to Reddit/Lemmy/PieFed.
 Auto-posting political rebuttals violates these platforms' rules and risks bans,
 so a human reviews and posts manually.
 

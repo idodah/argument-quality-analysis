@@ -76,7 +76,6 @@ from agents.graph.nodes import (
     route_after_router,
     route_after_stance,
     router,
-    skip_retrieval,
     stance_check,
     web_search,
 )
@@ -92,7 +91,6 @@ def build_graph():
     g.add_node("router", router)
     g.add_node("retrieve_local", retrieve_local)
     g.add_node("retrieve_web", retrieve_web)
-    g.add_node("skip_retrieval", skip_retrieval)
     g.add_node("grade_docs", grade_docs)
     g.add_node("web_search", web_search)
     g.add_node("reflect", reflect)
@@ -119,21 +117,20 @@ def build_graph():
         },
     )
 
-    # Router -> retrieval arm (local, web, or none-skip).
+    # Router -> retrieval arm (local, web) or straight to reflect ('none').
     g.add_conditional_edges(
         "router",
         route_after_router,
         {
             "retrieve_local": "retrieve_local",
             "retrieve_web": "retrieve_web",
-            "skip_retrieval": "skip_retrieval",
+            # 'none' arm: skip retrieval/grade and go straight to reflect.
+            # Refinement still runs, just without new retrieved evidence.
+            "reflect": "reflect",
         },
     )
     g.add_edge("retrieve_local", "grade_docs")
     g.add_edge("retrieve_web", "grade_docs")
-    # 'none' arm: skip retrieval/grade, go straight to reflect. Refinement still
-    # runs, just without new retrieved evidence.
-    g.add_edge("skip_retrieval", "reflect")
 
     # Grade docs -> web_search fallback (if irrelevant) or straight to reflect.
     g.add_conditional_edges(

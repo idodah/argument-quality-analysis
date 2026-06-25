@@ -3,8 +3,9 @@ web_search node.
 
 Retrieved chunks are written to `documents`, the single canonical evidence /
 citation pool that reflect, refine, and hallucination_check all read. The
-`skip_retrieval` arm (router 'none') preserves the existing `documents` so
-later refinement passes can still cite previously-grounded facts.
+router's 'none' arm routes straight to reflect (see route_after_router): it adds
+no documents and preserves the existing `documents` simply by not touching
+state, so later refinement passes can still cite previously-grounded facts.
 """
 
 from __future__ import annotations
@@ -87,19 +88,6 @@ def retrieve_web(state: GraphState) -> GraphState:
     deduped = _dedupe(chunks)
     print(f"[retrieve_web] {len(queries)} queries -> {len(deduped)} unique chunks")
     return {"documents": deduped}
-
-
-def skip_retrieval(state: GraphState) -> GraphState:
-    """Router 'none' arm: skip retrieval this pass.
-
-    No new documents are added; the existing `documents` pool from prior
-    refinement passes is preserved so refine can still cite previously-grounded
-    facts. The downstream hallucination_check skips on retrieval_mode=='none'
-    for the same reason it skips on 'local': there is no fresh factual evidence
-    to ground against this pass.
-    """
-    print("[skip_retrieval] router chose 'none' — no new retrieval this pass")
-    return {}
 
 
 def web_search(state: GraphState) -> GraphState:

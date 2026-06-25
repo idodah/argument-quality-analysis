@@ -26,10 +26,13 @@ from agents.graph.state import GraphState, MAX_GROUND_RETRIES
 
 
 def route_after_router(state: GraphState) -> str:
+    # 'none' routes straight to reflect: it adds no documents and preserves the
+    # existing pool simply by not touching state, so there is no work to do
+    # between the router and reflect on that arm.
     return {
         "local": "retrieve_local",
         "web": "retrieve_web",
-        "none": "skip_retrieval",
+        "none": "reflect",
     }[state["retrieval_mode"]]
 
 

@@ -13,7 +13,7 @@ from agents.graph.nodes.grade_docs import grade_docs
 from agents.graph.nodes.hallucination_check import hallucination_check
 from agents.graph.nodes.refine import refine
 from agents.graph.nodes.reflect import reflect
-from agents.graph.nodes.retrieve import retrieve_local, retrieve_web, skip_retrieval, web_search
+from agents.graph.nodes.retrieve import retrieve_local, retrieve_web, web_search
 from agents.graph.nodes.router import router
 from agents.graph.nodes.routing import (
     route_after_grade,
@@ -35,7 +35,6 @@ __all__ = [
     "reflect",
     "retrieve_local",
     "retrieve_web",
-    "skip_retrieval",
     "web_search",
     "router",
     "stance_check",
