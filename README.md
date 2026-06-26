@@ -229,19 +229,11 @@ Four patterns are fused into the graph:
   initial drafts and keeps the winner as the active side; only the survivor
   iterates from here.
 - **early_stance_check** — pre-refinement stance gate on the raw
-  survivor. Catches only the off-topic / anti-Israel case (which refinement
-  cannot rescue) and regenerates immediately *while the regeneration budget
-  lasts*; on-topic survivors fall through to the router. It has just two
-  out-edges (`generate_initial` | `router`) and never routes to `finalize`:
-  once the regen budget is spent it hands the draft to the router so the late
-  `stance_check` is always reached. Give-up is decided solely by the late gate.
+  survivor. Catches only the off-topic / anti-Israel case and regenerates immediately; on-topic survivors fall through to the router.
 - **router** — Adaptive-RAG: picks `local`, `web`, or `none` (skip retrieval —
   the current draft is strong enough to refine without new evidence) for the
   active side this pass; when it picks `web`, the same call also plans the
-  search queries that target the critique's evidence gaps. It also resets the
-  grounding-retry budget and clears any stale grounding verdict at the start of
-  each pass. (Set `FORCE_RETRIEVAL_MODE={local|web}` in the env to pin the route
-  for debugging.)
+  search queries that target the critique's evidence gaps.
 - **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
@@ -263,14 +255,9 @@ Four patterns are fused into the graph:
   and/or a stance reason from `stance_check`), attaching inline `[n]` citations
   to evidence-backed claims. Drops an empty `### Sources` footer if the model
   cited nothing.
-- **hallucination_check** — Self-RAG binary groundedness check. Skipped when
-  retrieval was `local` or `none` (no factual evidence to check against — those
-  passes are marked grounded but `grounding_verified=False`). Otherwise grades
-  the draft; only a genuinely fabricated fact counts as ungrounded
-  (citation-marker problems are tolerated). An ungrounded verdict spends one
-  grounding retry and loops back to `refine` until the per-pass budget is spent.
-- **stance_check** — the authoritative gate: classifies the refined draft as
-  `pro_israel` (→ finalize), `neutral_needs_refine` (→ router, refinement loop)
+- **hallucination_check** — Self-RAG binary groundedness check.
+- **stance_check** — classifies the refined draft as
+  `pro_israel`, `neutral_needs_refine`
   or `off_topic_or_anti` (→ generate_initial, regeneration loop). It records a
   `regen_reason` the next pass must fix, and sets `gave_up=True` (→ finalize)
   when both the refinement and regeneration budgets are exhausted.
@@ -296,7 +283,7 @@ The `harvester/` package applies the agent workflow to live data: it searches
 three social networks — **Reddit, Lemmy, and PieFed** — for recent anti-Israel
 posts, drafts a pro-Israel
 rebuttal with the same `agents.generate` entrypoint, and pushes it to the operator
-via ntfy. It is **read + draft + notify only** — it never posts back; a human
+via ntfy app. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
 
 ```
@@ -313,8 +300,7 @@ reviews and decides whether to post.
 ### Run it
 
 `orchestrate.py` is the single entrypoint and a **one-shot** — it runs once and
-exits; schedule it externally (cron, a systemd timer, or on AWS an EventBridge
-schedule → a Fargate task):
+exits.
 
 ```bash
 # Defaults: ≤3 answers, only posts from the last 24h, Reddit-first then newest.
@@ -337,13 +323,7 @@ notify. If nothing is new, it does nothing.
 
 Each post is answered **at most once, ever**. On first sight — before any
 classify/generate work — its **canonical id** (the ActivityPub `ap_id`, or the
-Reddit permalink) is claimed in a `seen` ledger. The claim is atomic and
-race-safe in both backends: an `INSERT OR IGNORE` in SQLite, or a conditional
-`PutItem` (`attribute_not_exists`) in DynamoDB. The *same federated post on
-Lemmy and PieFed* shares a canonical id, so it's answered once. `--dry-run` only
-peeks, never consumes the ledger. Locally the ledger persists in
-`harvester_tracking.db` (`HARVESTER_DB`); on AWS it lives in DynamoDB. Delete the
-file (or the table items) to reset.
+Reddit permalink) is claimed in a `seen` ledger.
 
 ### Files
 
@@ -355,28 +335,17 @@ file (or the table items) to reset.
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM anti-Israel stance classifier. |
 | `notify.py` | Send one ntfy push per generated response (the only outbound write). |
-| `tracking.py` | The `seen` dedup ledger + a `responses` store of generated rebuttals. SQLite locally; DynamoDB on AWS when `DDB_SEEN_TABLE`/`DDB_RESPONSES_TABLE` are set. |
-
-**Cross-section dependency:** the only calls outside `harvester/` are to
-`agents/` (`orchestrate.py` → `agents.generate`, `classify.py` → `agents.llm`);
-everything else is self-contained.
+| `tracking.py` | The `seen` dedup ledger + a `responses` store of generated rebuttals. |
 
 ### The Fediverse
 
 Reddit's data API is approval-gated, but its public `/r/changemyview/new/.rss`
 feed and the Lemmy/PieFed APIs are free to read unauthenticated. Lemmy and PieFed
-are Reddit-like federated platforms where anti-Israel content is abundant. (Mbin
-was evaluated and skipped — its search requires OAuth.)
+are Reddit-like federated platforms.
 
 `fediverse_mcp.py` exposes the read tools (`search_posts`, `get_thread`) over MCP.
 The tools are read-only; the orchestrator itself currently drives them as a
 deterministic loop.
-
-### Out of scope: auto-posting
-
-The pipeline ends at **notifying the operator** — it never posts to Reddit/Lemmy/PieFed.
-Auto-posting political rebuttals violates these platforms' rules and risks bans,
-so a human reviews and posts manually.
 
 ## Deployment
 
@@ -389,29 +358,6 @@ EventBridge Scheduler  ──►  ECS Fargate (one-shot task)  ──►  Amazon
                                     │                           SageMaker async GPU endpoint
                                     └─ secrets from Secrets Manager   (Qwen ranker, optional)
 ```
-
-- **Compute** — the one-shot `harvester.orchestrate` runs as a CPU-only **Fargate**
-  task, kicked off hourly by **EventBridge Scheduler**. No always-on server.
-- **LLM** — the agent graph calls **Amazon Bedrock** (Nova 2 Lite); in the EU
-  that's a cross-region inference profile (`eu.amazon.nova-2-lite-v1:0`).
-- **Ranker** — the QLoRA Qwen ranker is packaged for a **SageMaker** async GPU
-  endpoint that scales to zero (`infra/sagemaker/`). It's gated behind
-  `enable_sagemaker_ranker` and **disabled by default** (the GPU cost isn't
-  justified for a demo); the task then runs `RANKER_DISABLED=1` and the A/B
-  elimination defaults to side A.
-- **State** — the dedup ledger and response store move from SQLite to **DynamoDB**.
-- **Secrets** — API keys live in **Secrets Manager** and are injected into the
-  task at runtime; none are baked into the image or Terraform state.
-- **Network** — a dedicated **VPC** with private subnets + NAT and VPC endpoints;
-  the task has no public IP.
-- **CI/CD** — **GitHub Actions** builds/pushes the image to **ECR** and runs
-  Terraform, authenticating via **OIDC** (no static AWS keys in CI).
-- **Cost guards** — AWS **Budgets** (a Bedrock+SageMaker alarm and a total-account
-  hard cap, alerting at 50/80/100%), a daily **Lambda** cost-summary email, and a
-  `pause.sh` kill-switch. In-app `--max-generations` / `--max-age-hours` bound
-  paid work per run.
-
-See `infra/terraform/` for the stack.
 
 ## Security
 
