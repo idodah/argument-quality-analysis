@@ -207,16 +207,11 @@ immediately, so a hopeless draft never burns a full refinement loop) and the
 authoritative `stance_check` after `hallucination_check` (every argument that
 ships via the late gate has passed through the grounding pass).
 
-> **On "grounded".** The hallucination check verifies a claim is supported by
-> the *retrieved evidence*, and the web arm is restricted to a pro-Israel /
-> advocacy domain allow-list (`WEB_ALLOWED_DOMAINS`). So `grounded=True` means
-> "consistent with the retrieved (one-sided, by design) sources", not
-> "independently fact-checked / neutral". 
-
 Four patterns are fused into the graph:
 
-- **Adaptive RAG** — the router picks between local Chroma and Tavily web
-  search each pass.
+- **Adaptive RAG** — each pass the router picks one of three routes: local
+  Chroma retrieval, Tavily web search, or `none` (skip retrieval entirely and
+  refine the current draft on the evidence already in hand).
 - **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
   relevance and keeps only the relevant subset (triggering a web search if none
   survive), and `hallucination_check` verifies the refined draft is grounded in
