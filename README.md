@@ -201,7 +201,7 @@ independent loops, each with its own cap:
   thrown out and regenerated. The early gate regenerates up to
   `MAX_EARLY_REGEN_ITERS` times per generation.
 
-There are **two stance gates**: a cheap `early_stance_check` on the raw survivor
+There are **two stance gates**: `early_stance_check` on the raw survivor
 (before any refinement, catches off-topic/anti survivors and regenerates
 immediately, so a hopeless draft never burns a full refinement loop) and the
 authoritative `stance_check` after `hallucination_check` (every argument that
@@ -219,7 +219,7 @@ Four patterns are fused into the graph:
 - **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
 - **Reflexion** — every critique is accumulated into a running
   `critique_history` that the refiner consumes in full, so it stops repeating
-  fixed mistakes; the Qwen ranker supplies the one-time A-vs-B reward.
+  fixed mistakes.
 
 ### Graph nodes
 
@@ -227,11 +227,8 @@ Four patterns are fused into the graph:
   `arg_b`) from the topic and original post.
 - **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
   initial drafts and keeps the winner as the active side; only the survivor
-  iterates from here. This is the only A-vs-B decision in the graph, made when
-  both drafts are at equal polish. Elimination is permanent and not
-  stance-aware: a wrongly-eliminated-but-salvageable draft is only recoverable
-  via a full regeneration (which replaces both drafts).
-- **early_stance_check** — cheap pre-refinement stance gate on the raw
+  iterates from here.
+- **early_stance_check** — pre-refinement stance gate on the raw
   survivor. Catches only the off-topic / anti-Israel case (which refinement
   cannot rescue) and regenerates immediately *while the regeneration budget
   lasts*; on-topic survivors fall through to the router. It has just two
@@ -356,7 +353,7 @@ file (or the table items) to reset.
 | `fetch.py` | `fetch_from_rss()`: read the live Reddit Atom feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
-| `classify.py` | Cheap keyword prefilter, then an LLM anti-Israel stance classifier. |
+| `classify.py` | keyword prefilter, then an LLM anti-Israel stance classifier. |
 | `notify.py` | Send one ntfy push per generated response (the only outbound write). |
 | `tracking.py` | The `seen` dedup ledger + a `responses` store of generated rebuttals. SQLite locally; DynamoDB on AWS when `DDB_SEEN_TABLE`/`DDB_RESPONSES_TABLE` are set. |
 
