@@ -192,24 +192,17 @@ the survivor against retrieved evidence. Refinement is governed by four
 independent loops, each with its own cap:
 
 - **Grounding loop** (`hallucination_check -> refine`): re-refines while the
-  draft is ungrounded, up to `MAX_GROUND_RETRIES` times **per refinement pass**
-  (reset by the router each pass).
+  draft is ungrounded, up to `MAX_GROUND_RETRIES` times per refinement pass.
 - **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
   not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
   up to `MAX_REFINE_ITERS` passes per generation.
 - **Regeneration loops** (`stance_check`/`early_stance_check ->
   generate_initial`): if the draft is off-topic or anti-Israel, both drafts are
   thrown out and regenerated. The early gate regenerates up to
-  `MAX_EARLY_REGEN_ITERS` times **per generation** (its budget reset on each
-  fresh generation); the late gate regenerates up to `MAX_LATE_REGEN_ITERS`
-  times across the whole run (each regeneration resets the refinement counter).
-  When both the refinement and late-regeneration budgets are spent the late
-  `stance_check` records `gave_up=True` and reports it honestly rather than
-  shipping a non-pro-Israel argument. (The early gate only regenerates; it never
-  decides give-up.)
+  `MAX_EARLY_REGEN_ITERS` times per generation.
 
 There are **two stance gates**: a cheap `early_stance_check` on the raw survivor
-(before any refinement — catches off-topic/anti survivors and regenerates
+(before any refinement, catches off-topic/anti survivors and regenerates
 immediately, so a hopeless draft never burns a full refinement loop) and the
 authoritative `stance_check` after `hallucination_check` (every argument that
 ships via the late gate has passed through the grounding pass).
@@ -217,12 +210,8 @@ ships via the late gate has passed through the grounding pass).
 > **On "grounded".** The hallucination check verifies a claim is supported by
 > the *retrieved evidence*, and the web arm is restricted to a pro-Israel /
 > advocacy domain allow-list (`WEB_ALLOWED_DOMAINS`). So `grounded=True` means
-> "consistent with the retrieved (one-sided, by design) sources", **not**
-> "independently fact-checked / neutral". The `local` and `none` retrieval arms
-> have no factual evidence to check against, so they mark the draft grounded
-> *without running the grader*; `final_scores["grounding_verified"]`
-> distinguishes a grader-verified pass (`True`) from an assumed one (`False`).
-> Keep this in mind for any analysis that leans on the `grounded` flag.
+> "consistent with the retrieved (one-sided, by design) sources", not
+> "independently fact-checked / neutral". 
 
 Four patterns are fused into the graph:
 
