@@ -3,7 +3,7 @@
 This project's goal is to **find anti-Israel arguments on three social networks:
 Reddit, Lemmy, and PieFed and automatically generate a well-grounded,
 persuasive pro-Israel response to each one.** To do that well, it first studies
-*what makes an argument persuasive at all* and trains a model to score argument
+what makes an argument persuasive at all and trains a model to score argument
 quality, then builds an agent that drafts a rebuttal and refines it against
 retrieved evidence, reusing the learned quality model at one point in the graph:
 the agent produces **two** initial drafts and the model picks the stronger of the
