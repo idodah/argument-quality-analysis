@@ -125,7 +125,7 @@ uv run python -m preprocessing.filter_by_tokens
 ### The pro-Israel retrieval corpus
 
 The `rag/` package builds the evidence corpus the agent grounds its rebuttals
-in: **delta-awarded CMV-Israel arguments**. It scrapes Israel-related CMV
+in **delta-awarded CMV-Israel arguments**. It scrapes Israel-related CMV
 threads, classifies each argument's stance, and ingests the high-confidence
 pro-Israel comments (i.e. persuasive, real-world rebuttals that already worked on
 a human) into the Chroma collection `pro_israel_corpus`.
