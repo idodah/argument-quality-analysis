@@ -1,41 +1,57 @@
 # Argument Quality Analysis
 
-A research codebase that studies what makes an argument persuasive on Reddit's
-r/changemyview (CMV), and then uses those signals to drive an agentic
-refinement loop that improves a candidate argument against a given post.
+This project's goal is to **find anti-Israel arguments on three social networks:
+Reddit, Lemmy, and PieFed and automatically generate a well-grounded,
+persuasive pro-Israel response to each one.** To do that well, it first studies
+*what makes an argument persuasive at all* and trains a model to score argument
+quality, then builds an agent that drafts a rebuttal and refines it against
+retrieved evidence, reusing the learned quality model at one point in the graph:
+the agent produces **two** initial drafts and the model picks the stronger of the
+two to carry forward.
 
-The project is organized around three core parts, plus a retrieval-corpus
-pipeline and an offline test suite:
+### Background: r/changemyview and deltas
 
-1. **Preprocessing** — building a clean pair-wise dataset of delta-awarded vs.
-   non-delta CMV arguments.
-2. **Models** — baseline TF-IDF classifiers, a zero-shot GPT-5.4-nano
-   pair-wise baseline, and a QLoRA fine-tuned Qwen3-8B pair-wise ranker.
-3. **Agents** — a LangGraph workflow that refines two opposing arguments
-   against each other using Adaptive-RAG, Self-RAG, Reflective-RAG, and
-   Reflexion patterns, with the Qwen ranker as the reward signal.
+The persuasion signal comes from Reddit's [r/changemyview
+(CMV)](https://www.reddit.com/r/changemyview/), a forum where someone posts an
+opinion they hold and explicitly invites others to change their mind. When a
+reply genuinely shifts the original poster's view, the OP awards it a **delta**
+(Δ) by replying with `!delta`. A
+delta is therefore a human-labeled marker of a *persuasive* argument: among all
+the replies to a post, the delta-awarded ones are the comments that demonstrably
+worked. We treat **delta vs. non-delta** as the ground-truth label for argument
+quality and learn to rank arguments accordingly.
 
-Supporting these are **RAG** (`rag/`), the pro-Israel retrieval-corpus pipeline
-that scrapes, classifies, and ingests CMV arguments into Chroma for the agents;
-the **harvester** (`harvester/`), which detects anti-Israel posts live across
-Reddit/Lemmy/PieFed and drafts rebuttals with the agent workflow; and **tests**
-(`tests/`), a fully offline suite covering graph wiring, helpers, and the package
-layout.
+## The three core parts
+
+1. **Preprocessing** (`preprocessing/`) — builds a clean pair-wise dataset of
+   delta-awarded vs. non-delta CMV arguments to learn persuasiveness from.
+2. **Models** (`models/`) — TF-IDF baselines, a zero-shot GPT-5.4-nano baseline,
+   and a QLoRA fine-tuned Qwen3-8B ranker that scores how persuasive an argument
+   is.
+3. **Agents** (`agents/`) — a LangGraph workflow that drafts **two** candidate
+   pro-Israel rebuttals to a given post, then iteratively refines the stronger
+   one against retrieved evidence, using Adaptive-RAG, Self-RAG, Reflective-RAG,
+   and Reflexion patterns.
+
+Supporting these are **RAG** (`rag/`), the pro-Israel retrieval corpus scraped
+delta-awarded CMV-Israel arguments plus international-law primary sources —
+ingested into Chroma so the agent can ground its rebuttals; the **harvester**
+(`harvester/`), which detects anti-Israel posts live across the three social
+networks (Reddit, and the Fediverse platforms Lemmy and PieFed) and drafts
+rebuttals with the agent workflow; and **tests** (`tests/`), a fully offline suite
+covering graph wiring, helpers, and the package layout.
 
 ## Repository layout
 
 ```
-preprocessing/   # generic pair-wise data pipelines (Webis-CMV-20, winning-args-corpus)
-rag/             # pro-Israel RAG-corpus pipeline (scrape -> classify -> ingest)
-models/          # TF-IDF baselines + Qwen3-8B pair-wise ranker
-agents/          # LangGraph refinement workflow + retrieval backends + generate entrypoint
-harvester/       # live multi-platform detector -> draft -> notify (see "Harvester")
-infra/           # AWS deployment: Terraform stack + SageMaker packaging (see "Deployment")
-tests/           # offline graph-wiring, helper-unit, and import smoke tests
+preprocessing/   # pair-wise data pipelines (Webis-CMV-20, winning-args-corpus)
+rag/             # pro-Israel retrieval corpus
+models/          # TF-IDF baselines, GPT-5.4-nano baseline, Qwen3-8B ranker
+agents/          # LangGraph refinement workflow
+harvester/       # live Reddit/Lemmy/PieFed detector -> draft -> notify
+infra/           # AWS deployment: Terraform stack + SageMaker packaging
+tests/           # offline graph-wiring, and helper-unit
 schemas.py       # Pydantic types shared across the pipelines
-graph.png        # rendered topology of the agentic workflow (see "Agentic refinement")
-data/            # generated artifacts (gitignored)
-.chroma/         # Chroma vector store for the retriever (gitignored)
 ```
 
 ## Setup
@@ -58,36 +74,21 @@ HF_TOKEN=...                # optional, for dataset/model uploads
 RANKER_PATH=...             # Qwen ranker checkpoint, for the agentic graph
 ```
 
-The agent graph's LLM calls go through **Amazon Bedrock** (`agents/llm.py` →
-`ChatBedrockConverse`, Nova 2 Lite by default); credentials come from the
-standard AWS chain (a task role on Fargate, or the local env/profile).
-OpenAI is now used **only for embeddings** (the Chroma retriever and the
-preprocessing similarity filter).
+The agent graph's LLM calls go through **Amazon Bedrock** (Nova 2 Lite by default);
 
 ### Observability (optional)
 
 Both are opt-in and no-op unless the keys are present:
 
 - **LangSmith** traces every node / LLM call of the agentic graph. Enable with
-  `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY=ls__...`, and optionally
-  `LANGSMITH_PROJECT=argument-quality`.
+  `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY=ls__...`.
 - **Weights & Biases** logs the Qwen QLoRA fine-tuning run. Enable with
-  `WANDB_API_KEY=...` (and optionally `WANDB_PROJECT=qwen-qlora-ranker`) before
+  `WANDB_API_KEY=...` before
   running `uv run python -m models.qwen`.
 
 ### Tests
 
-The `tests/` suite is fully offline — no API keys, network, or model loading
-(every LLM / retrieval / Qwen boundary is stubbed). Run it with:
-
-```bash
-uv run pytest
-```
-
-It covers the graph's loop caps and termination (`test_graph_offline.py`), the
-deterministic string/parse helpers (`test_helpers.py`), the package layout /
-shared entrypoint (`test_layout_imports.py`), and the harvester's Fediverse
-adapter parsing (`test_fediverse_adapters.py`).
+The `tests/` suite is fully offline — no API keys, network, or model loading. 
 
 ## Data pipeline
 
@@ -121,28 +122,43 @@ train on.
 uv run python -m preprocessing.filter_by_tokens
 ```
 
-For the Israel-focused RAG corpus, the `rag/` package scrapes CMV threads via
-arctic-shift, classifies each argument's stance, and ingests the high-confidence
-pro-Israel arguments (plus a few legal primary sources) into Chroma:
+### The pro-Israel retrieval corpus
+
+The `rag/` package builds the evidence corpus the agent grounds its rebuttals in.
+It is **two kinds of source**, both ingested into the same Chroma collection
+(`pro_israel_corpus`):
+
+1. **Delta-awarded CMV-Israel arguments** — `rag/` scrapes Israel-related CMV
+   threads via arctic-shift, classifies each argument's stance, and keeps the
+   high-confidence pro-Israel comments (i.e. persuasive, real-world rebuttals
+   that already worked on a human).
+2. **International-law primary sources** — authoritative legal documents fetched
+   from their canonical URLs and chunked, tagged `doc_type == "legal_primary"` to
+   distinguish them from the CMV comments. Currently the **UN Palmer Report
+   (2011)** on the Gaza-flotilla incident and the **San Remo Manual** on the law
+   of armed conflict at sea — so the agent can cite actual law, not just other
+   people's arguments.
 
 ```bash
 uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
 uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
-uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
-uv run python -m rag.ingest_legal_sources   # -> Palmer/San Remo legal chunks
+uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus (CMV args)
+uv run python -m rag.ingest_legal_sources   # -> .chroma/ pro_israel_corpus (Palmer/San Remo)
 ```
 
 ## Baselines
 
-Run TF-IDF + Logistic Regression / Random Forest / XGBoost over the pair-wise
-dataset. The two arguments share a single TF-IDF vocabulary and enter the
-classifier as one *signed difference* vector — `tfidf(arg_a) - tfidf(arg_b)` —
-rather than as two concatenated blocks (context fields are vectorized as-is).
-Swapping the two arguments therefore just negates the argument features, so the
-model sees only the contrast between them and can't learn a "slot A is usually
-the delta" positional shortcut. This holds the baselines to the same
-order-invariant bar as the Qwen ranker, which scores each argument
-independently. The shared featurizer lives in `models.tfidf_features.PairTfidf`.
+Simple bag-of-words baselines: TF-IDF features into Logistic Regression /
+Random Forest / XGBoost, predicting which of the two arguments earned the delta.
+
+The two arguments share one TF-IDF vocabulary, and the classifier sees their
+*difference*, `tfidf(arg_a) - tfidf(arg_b)`, rather than the two vectors
+side by side (the topic and post are vectorized separately as context). Feeding
+the difference means swapping the two arguments just flips its sign, so the model
+can only learn from the contrast between them — never a "slot A is usually the
+delta" positional shortcut. That keeps the baselines order-invariant, the same
+bar the Qwen ranker meets by scoring each argument on its own. The featurizer is
+`models.tfidf_features.PairTfidf`.
 
 ```bash
 uv run python -m models.main
@@ -159,15 +175,38 @@ answer token.
 uv run python -m models.gpt_5_4_nano
 ```
 
-## Qwen3-8B pair-wise ranker
+## Qwen3-8B ranker
 
-QLoRA (4-bit NF4) fine-tuning of Qwen3-8B with a margin ranking loss over
-delta vs. non-delta arguments. Scoring is order-invariant — each argument
-gets an independent forward pass and the higher score wins.
+QLoRA (4-bit NF4) fine-tuning of Qwen3-8B with a small scalar score head on top
+of the mean-pooled last hidden state. It is **trained pair-wise but scores
+point-wise**: training uses a margin ranking loss over (delta, non-delta) pairs
+to push `score(delta) > score(non-delta)`, but at inference each argument gets
+its own independent forward pass to a single scalar — there is no A/B token and
+the model never sees both arguments at once. Ranking two candidates is then just
+comparing their two scalars, so scoring is order-invariant by construction (the
+higher score wins regardless of order). This is the opposite of the GPT-5.4-nano
+baseline, which is genuinely pair-wise — it reads both arguments in one prompt
+and emits an A/B choice.
 
 ```bash
 uv run python -m models.qwen
 ```
+
+## Results
+
+Test-split metrics for each model (best run per model):
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
+|-------|----------|-----------|--------|-----|---------|
+| gpt_5_4_nano | 0.5324 | 0.5337 | 0.6274 | 0.5768 | 0.5308 |
+| tfidf_logreg | 0.5604 | 0.5800 | 0.4880 | 0.5300 | 0.5967 |
+| tfidf_random_forest | 0.5275 | 0.5438 | 0.4327 | 0.4819 | 0.5487 |
+| tfidf_xgboost | 0.5238 | 0.5312 | 0.5312 | 0.5312 | 0.5400 |
+| qwen_qlora_rank | **0.6716** | **0.6824** | **0.6611** | **0.6716** | **0.7236** |
+
+(`gpt_5_4_nano` is a reasoning model and doesn't expose answer-token logprobs,
+so its ROC-AUC is computed from a near-neutral fallback confidence rather than a
+calibrated probability — read it as ≈ chance.)
 
 ## Agentic refinement
 
@@ -297,7 +336,8 @@ Graph topology:
 ## Harvester
 
 The `harvester/` package applies the agent workflow to live data: it searches
-**Reddit, Lemmy, and PieFed** for recent anti-Israel posts, drafts a pro-Israel
+three social networks — **Reddit, Lemmy, and PieFed** — for recent anti-Israel
+posts, drafts a pro-Israel
 rebuttal with the same `agents.generate` entrypoint, and pushes it to the operator
 via ntfy. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
