@@ -152,9 +152,7 @@ uv run python -m models.main
 ## GPT-5.4-nano zero-shot baseline
 
 Zero-shot pair-wise prompting of GPT-5.4-nano (no fine-tuning). Both
-arguments are shown in a single prompt; the model picks `A` or `B`, and the
-probability of `A` is calibrated from the top-logprob distribution at the
-answer token.
+arguments are shown in a single prompt; the model picks `A` or `B`.
 
 ```bash
 uv run python -m models.gpt_5_4_nano
