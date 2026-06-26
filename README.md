@@ -3,11 +3,11 @@
 This project's goal is to **find anti-Israel arguments on three social networks:
 Reddit, Lemmy, and PieFed and automatically generate a well-grounded,
 persuasive pro-Israel response to each one.** To do that well, it first studies
-what makes an argument persuasive at all and trains a model to score argument
-quality, then builds an agent that drafts a rebuttal and refines it against
-retrieved evidence, reusing the learned quality model at one point in the graph:
-the agent produces **two** initial drafts and the model picks the stronger of the
-two to carry forward.
+what makes an argument persuasive at all and trains a model that, given two
+arguments, predicts which one changed the reader's view, then builds an agent
+that drafts a rebuttal and refines it against retrieved evidence, reusing that
+model at one point in the graph: the agent produces **two** initial drafts and
+the model picks the one more likely to be persuasive to carry forward.
 
 ### Background: r/changemyview and deltas
 
@@ -26,8 +26,8 @@ quality and learn to rank arguments accordingly.
 1. **Preprocessing** (`preprocessing/`) — builds a clean pair-wise dataset of
    delta-awarded vs. non-delta CMV arguments to learn persuasiveness from.
 2. **Models** (`models/`) — TF-IDF baselines, a zero-shot GPT-5.4-nano baseline,
-   and a QLoRA fine-tuned Qwen3-8B ranker that scores how persuasive an argument
-   is.
+   and a QLoRA fine-tuned Qwen3-8B ranker, all trained to predict which of two
+   arguments changed the reader's view.
 3. **Agents** (`agents/`) — a LangGraph workflow that drafts **two** candidate
    pro-Israel rebuttals to a given post, then iteratively refines the stronger
    one against retrieved evidence, using Adaptive-RAG, Self-RAG, Reflective-RAG,
