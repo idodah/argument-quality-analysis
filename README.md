@@ -184,10 +184,6 @@ Test-split metrics for each model (best run per model):
 | tfidf_xgboost | 0.5238 | 0.5312 | 0.5312 | 0.5312 | 0.5400 |
 | qwen_qlora_rank | **0.6716** | **0.6824** | **0.6611** | **0.6716** | **0.7236** |
 
-(`gpt_5_4_nano` is a reasoning model and doesn't expose answer-token logprobs,
-so its ROC-AUC is computed from a near-neutral fallback confidence rather than a
-calibrated probability — read it as ≈ chance.)
-
 ## Agentic refinement
 
 The `agents` package wires a LangGraph workflow that drafts two candidate
