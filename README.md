@@ -15,7 +15,7 @@ The persuasion signal comes from Reddit's [r/changemyview
 (CMV)](https://www.reddit.com/r/changemyview/), a forum where someone posts an
 opinion they hold and explicitly invites others to change their mind. When a
 reply genuinely shifts the original poster's view, the OP awards it a **delta**
-(Δ) by replying with `!delta`. A
+(Δ). A
 delta is therefore a human-labeled marker of a *persuasive* argument: among all
 the replies to a post, the delta-awarded ones are the comments that demonstrably
 worked. We treat **delta vs. non-delta** as the ground-truth label for argument
@@ -33,9 +33,9 @@ quality and learn to rank arguments accordingly.
    one against retrieved evidence, using Adaptive-RAG, Self-RAG, Reflective-RAG,
    and Reflexion patterns.
 
-Supporting these are **RAG** (`rag/`), the pro-Israel retrieval corpus scraped
-delta-awarded CMV-Israel arguments plus international-law primary sources —
-ingested into Chroma so the agent can ground its rebuttals; the **harvester**
+Supporting these are **RAG** (`rag/`), the pro-Israel retrieval corpus of scraped
+delta-awarded CMV-Israel arguments ingested into Chroma so the agent can ground
+its rebuttals; the **harvester**
 (`harvester/`), which detects anti-Israel posts live across the three social
 networks (Reddit, and the Fediverse platforms Lemmy and PieFed) and drafts
 rebuttals with the agent workflow; and **tests** (`tests/`), a fully offline suite
@@ -124,26 +124,16 @@ uv run python -m preprocessing.filter_by_tokens
 
 ### The pro-Israel retrieval corpus
 
-The `rag/` package builds the evidence corpus the agent grounds its rebuttals in.
-It is **two kinds of source**, both ingested into the same Chroma collection
-(`pro_israel_corpus`):
-
-1. **Delta-awarded CMV-Israel arguments** — `rag/` scrapes Israel-related CMV
-   threads via arctic-shift, classifies each argument's stance, and keeps the
-   high-confidence pro-Israel comments (i.e. persuasive, real-world rebuttals
-   that already worked on a human).
-2. **International-law primary sources** — authoritative legal documents fetched
-   from their canonical URLs and chunked, tagged `doc_type == "legal_primary"` to
-   distinguish them from the CMV comments. Currently the **UN Palmer Report
-   (2011)** on the Gaza-flotilla incident and the **San Remo Manual** on the law
-   of armed conflict at sea — so the agent can cite actual law, not just other
-   people's arguments.
+The `rag/` package builds the evidence corpus the agent grounds its rebuttals
+in: **delta-awarded CMV-Israel arguments**. It scrapes Israel-related CMV
+threads, classifies each argument's stance, and ingests the high-confidence
+pro-Israel comments (i.e. persuasive, real-world rebuttals that already worked on
+a human) into the Chroma collection `pro_israel_corpus`.
 
 ```bash
 uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
 uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
-uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus (CMV args)
-uv run python -m rag.ingest_legal_sources   # -> .chroma/ pro_israel_corpus (Palmer/San Remo)
+uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
 ```
 
 ## Baselines
