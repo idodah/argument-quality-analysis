@@ -160,16 +160,13 @@ uv run python -m models.gpt_5_4_nano
 
 ## Qwen3-8B ranker
 
-QLoRA (4-bit NF4) fine-tuning of Qwen3-8B with a small scalar score head on top
-of the mean-pooled last hidden state. It is **trained pair-wise but scores
+QLoRA fine-tuning of Qwen3-8B. It is **trained pair-wise but scores
 point-wise**: training uses a margin ranking loss over (delta, non-delta) pairs
 to push `score(delta) > score(non-delta)`, but at inference each argument gets
 its own independent forward pass to a single scalar — there is no A/B token and
 the model never sees both arguments at once. Ranking two candidates is then just
 comparing their two scalars, so scoring is order-invariant by construction (the
-higher score wins regardless of order). This is the opposite of the GPT-5.4-nano
-baseline, which is genuinely pair-wise — it reads both arguments in one prompt
-and emits an A/B choice.
+higher score wins regardless of order).
 
 ```bash
 uv run python -m models.qwen
