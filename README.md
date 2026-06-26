@@ -143,12 +143,7 @@ Random Forest / XGBoost, predicting which of the two arguments earned the delta.
 
 The two arguments share one TF-IDF vocabulary, and the classifier sees their
 *difference*, `tfidf(arg_a) - tfidf(arg_b)`, rather than the two vectors
-side by side (the topic and post are vectorized separately as context). Feeding
-the difference means swapping the two arguments just flips its sign, so the model
-can only learn from the contrast between them — never a "slot A is usually the
-delta" positional shortcut. That keeps the baselines order-invariant, the same
-bar the Qwen ranker meets by scoring each argument on its own. The featurizer is
-`models.tfidf_features.PairTfidf`.
+side by side (the topic and post are vectorized separately as context).
 
 ```bash
 uv run python -m models.main
