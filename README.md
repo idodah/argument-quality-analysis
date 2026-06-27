@@ -223,9 +223,8 @@ patterns** that the wiring implements.
   superfluous). Each critique is appended to `critique_history` (Reflexion).
 - **refine** — rewrites the active side's draft using the full critique history
   plus any **fix notes** (ungrounded-claim issues from `hallucination_check`
-  and/or a stance reason from `stance_check`), attaching inline `[n]` citations
-  to evidence-backed claims. Drops an empty `### Sources` footer if the model
-  cited nothing.
+  and/or a stance reason from `stance_check`), attaching inline citations
+  to evidence-backed claims.
 - **hallucination_check** — Self-RAG binary groundedness check.
 - **stance_check** — classifies the refined draft as
   `pro_israel`, `neutral_needs_refine`
