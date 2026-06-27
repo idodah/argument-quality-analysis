@@ -38,6 +38,12 @@ import time
 
 from dotenv import load_dotenv
 
+# Load .env BEFORE importing anything that reads env at import time. agents.llm
+# (pulled in via harvester.classify) reads LLM_BACKEND / model ids as module-level
+# constants, so .env must already be in os.environ when that import runs —
+# otherwise the backend silently falls back to its default regardless of .env.
+load_dotenv()
+
 from harvester import notify as notify_mod
 from harvester import tracking
 from harvester.classify import _neutralize, classify_anti_israel, keyword_match
