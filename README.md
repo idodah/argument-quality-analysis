@@ -209,7 +209,7 @@ patterns** that the wiring implements.
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
-- **router `none` arm** — routes straight to `reflect`: adds no new documents and
+- **skip_retrieval** — routes straight to `reflect`: adds no new documents and
   preserves the existing pool, so refinement still runs (and can cite
   previously-grounded facts) without fetching fresh evidence this pass.
 - **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
