@@ -267,15 +267,6 @@ Refinement is governed by four independent loops, each with its own cap:
   `MAX_LATE_REGEN_ITERS = 1` (1 regeneration retry) across the whole run (each
   regeneration resets the refinement counter).
 
-
-### Two stance gates
-
-There are **two stance gates**: `early_stance_check` on the raw survivor
-(before any refinement, catches off-topic/anti survivors and regenerates
-immediately, so a hopeless draft never burns a full refinement loop) and the
-authoritative `stance_check` after `hallucination_check` (every argument that
-ships via the late gate has passed through the grounding pass).
-
 ### RAG patterns
 
 Four patterns are fused into the graph:
@@ -306,7 +297,7 @@ reviews and decides whether to post.
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
   │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
   │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py          │
-  │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB)  │
+  │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
             ▲
    fediverse/ adapters (Lemmy, PieFed, Reddit) — also exposed read-only via fediverse_mcp.py
@@ -324,33 +315,33 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
 ```
 
-Notifier setup: set `NTFY_TOPIC=cmv-<random>` in `.env` and subscribe to that
-topic in the ntfy app (optional `NTFY_SERVER`, `NTFY_TOKEN`). The agent graph
+Notifier setup: set `NTFY_TOPIC=cmv-<topic_name>` in `.env` and subscribe to that
+topic in the ntfy app. The agent graph
 also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`, `RANKER_PATH`,
 `HF_TOKEN`).
 
-Each run searches every platform, drops posts older than `--max-age-hours`
-(default 24) or already answered, and — if anything new is in window — answers up
-to `--max-generations` (default 3), Reddit-first then newest: classify → draft →
-notify. If nothing is new, it does nothing.
+Each run searches every platform and drops posts older than `--max-age-hours`
+(default 24) or already answered. Whatever new posts remain within that window it
+answers, Reddit-first then newest: classify → draft → notify. If nothing new is
+in window, it does nothing.
 
 #### Dedup guarantee
 
 Each post is answered **at most once, ever**. On first sight — before any
 classify/generate work — its **canonical id** (the ActivityPub `ap_id`, or the
-Reddit permalink) is claimed in a `seen` ledger.
+Reddit permalink) is recorded in a `seen` store.
 
 ### Files
 
 | File | Role |
 |------|------|
 | `orchestrate.py` | The entrypoint. Search → dedup/age/sort → classify → generate → notify. |
-| `fetch.py` | `fetch_from_rss()`: read the live Reddit Atom feed into `Post` objects (HTML → text). |
+| `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM anti-Israel stance classifier. |
 | `notify.py` | Send one ntfy push per generated response (the only outbound write). |
-| `tracking.py` | The `seen` dedup ledger + a `responses` store of generated rebuttals. |
+| `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse
 
@@ -386,5 +377,3 @@ user can craft a post), so it ships with input-trust-boundary defenses:
 - **SSRF** — `harvester/fediverse/base.py::assert_safe_url()` blocks outbound
   requests to private / loopback / link-local / reserved IPs (every resolved
   address checked, defeating DNS rebinding), guarding the cloud metadata endpoint.
-
-`tests/test_security.py` covers the SSRF guard and the injection neutralizer.
