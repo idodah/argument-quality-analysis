@@ -231,9 +231,9 @@ patterns** that the wiring implements.
   or `off_topic_or_anti` (→ generate_initial, regeneration loop). It records a
   `regen_reason` the next pass must fix, and sets `gave_up=True` (→ finalize)
   when both the refinement and regeneration budgets are exhausted.
-- **finalize** — declares the surviving side the winner, publishes the
-  result as `generation`, surfaces any grounded / pro-Israel / gave-up warnings
-  (and whether grounding was verified), and prints the run's trajectory.
+- **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
+  grounded / pro-Israel / gave-up warnings (and whether grounding was verified),
+  and prints the run's trajectory.
 
 ### Graph topology
 
