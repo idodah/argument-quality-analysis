@@ -1,7 +1,7 @@
 # Argument Quality Analysis
 
 This project's goal is to **find anti-Israel arguments on three social networks (e.g reddit) and automatically generate a well-grounded,
-persuasive pro-Israel response to each one.** To do that well, it first studies
+persuasive pro-Israel response to each argument.** To do that well, it first studies
 what makes an argument persuasive at all and trains a model that, given two
 arguments, predicts which one changed the reader's view, then builds an agent
 that drafts a rebuttal and refines it against retrieved evidence.
