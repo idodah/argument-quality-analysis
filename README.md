@@ -1,7 +1,7 @@
 # Argument Quality Analysis
 
 This project's goal is to **find anti-Israel arguments on three social networks (e.g reddit) and automatically generate a well-grounded,
-persuasive pro-Israel response to each one.** To do that well, it first studies
+persuasive pro-Israel response to each argument.** To do that well, it first studies
 what makes an argument persuasive at all and trains a model that, given two
 arguments, predicts which one changed the reader's view, then builds an agent
 that drafts a rebuttal and refines it against retrieved evidence.
@@ -30,7 +30,7 @@ quality and learn to rank arguments accordingly.
    one against retrieved evidence, using Adaptive-RAG, Self-RAG, Reflective-RAG,
    and Reflexion patterns.
 
-Supporting these are **RAG** (`rag/`), the pro-Israel retrieval corpus of scraped
+Supporting these are **RAG** (`rag/`), a pro-Israel retrieval corpus of scraped
 delta-awarded CMV-Israel arguments ingested into Chroma so the agent can ground
 its rebuttals; the **harvester**
 (`harvester/`), which detects anti-Israel posts live across the three social
@@ -114,7 +114,7 @@ uv run python -m preprocessing.filter_by_similarity
 A final token-length filter drops pairs whose arguments fall outside
 `[MIN_TOKENS, MAX_TOKENS]` (per the ranker's tokenizer), caps the original-post
 length, and enforces a max delta/nodelta length ratio so neither baseline nor
-ranker can exploit raw length. This produces the `filtered_v2` split the models
+ranker can exploit raw length. This produces the split the models
 train on.
 
 ```bash
