@@ -1,20 +1,17 @@
 # Argument Quality Analysis
 
-This project's goal is to **find anti-Israel arguments on three social networks:
-Reddit, Lemmy, and PieFed and automatically generate a well-grounded,
+This project's goal is to **find anti-Israel arguments on three social networks (e.g reddit) and automatically generate a well-grounded,
 persuasive pro-Israel response to each one.** To do that well, it first studies
 what makes an argument persuasive at all and trains a model that, given two
 arguments, predicts which one changed the reader's view, then builds an agent
-that drafts a rebuttal and refines it against retrieved evidence, reusing that
-model at one point in the graph: the agent produces **two** initial drafts and
-the model picks the one more likely to be persuasive to carry forward.
+that drafts a rebuttal and refines it against retrieved evidence.
 
 ### Background: r/changemyview and deltas
 
 The persuasion signal comes from Reddit's [r/changemyview
 (CMV)](https://www.reddit.com/r/changemyview/), a forum where someone posts an
 opinion they hold and explicitly invites others to change their mind. When a
-reply genuinely shifts the original poster's view, the OP awards it a **delta**
+reply genuinely shifts the original poster's view, the OP (the person who created the r/changemyview post) awards it a **delta**
 (Δ). A
 delta is therefore a human-labeled marker of a *persuasive* argument: among all
 the replies to a post, the delta-awarded ones are the comments that demonstrably
@@ -38,8 +35,10 @@ delta-awarded CMV-Israel arguments ingested into Chroma so the agent can ground
 its rebuttals; the **harvester**
 (`harvester/`), which detects anti-Israel posts live across the three social
 networks (Reddit, and the Fediverse platforms Lemmy and PieFed) and drafts
-rebuttals with the agent workflow; and **tests** (`tests/`), a fully offline suite
-covering graph wiring, helpers, and the package layout.
+rebuttals with the agent workflow; **infra** (`infra/`), the Terraform + GitHub
+Actions stack that runs the harvester on AWS as a scheduled, serverless job; and
+**tests** (`tests/`), a fully offline suite covering graph wiring, helpers, and
+the package layout.
 
 ## Repository layout
 

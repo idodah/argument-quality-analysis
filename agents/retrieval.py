@@ -3,8 +3,7 @@ Retrieval backends for the Adaptive-RAG step.
 
 Two arms:
   - local: Chroma vector store (`pro_israel_corpus`), the delta-awarded
-    CMV-Israel arguments plus legal primary-source chunks ingested by the
-    `rag/` pipeline (`rag.ingest_rag` / `rag.ingest_legal_sources`).
+    CMV-Israel arguments ingested by the `rag/` pipeline (`rag.ingest_rag`).
   - web:   Tavily search. Requires TAVILY_API_KEY in the environment.
 
 Both retrievers expose the same interface: `.retrieve(query, k) -> list[str]`.
@@ -50,8 +49,7 @@ class LocalRetriever:
         if _doc_count(self.store) == 0:
             print(
                 "[LocalRetriever] pro_israel_corpus is empty; local arm will return "
-                "no results. Populate it with `uv run python -m rag.ingest_rag` "
-                "(and `rag.ingest_legal_sources`)."
+                "no results. Populate it with `uv run python -m rag.ingest_rag`."
             )
 
     def retrieve(self, query: str, k: int | None = None, where: dict | None = None) -> list[str]:
@@ -65,8 +63,7 @@ class LocalRetriever:
         """Reassemble a retrieved argument with its post context for the generator.
 
         CMV-Israel docs embed the argument alone but carry topic/original_post
-        in metadata; legal-source chunks have neither, so we fall back to the
-        bare page_content.
+        in metadata; a doc missing both falls back to the bare page_content.
 
         Labels use bracket prefixes ('[topic]', '[original_post]', '[argument]')
         rather than markdown '###' headers. The ### form collides with the

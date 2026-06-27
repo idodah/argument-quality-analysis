@@ -6,20 +6,13 @@ setup is good enough, and notice if quality regresses as the corpus grows (the
 point at which adding chunking or hybrid search would start to pay off; see the
 discussion in the module docstrings of `rag/ingest_rag.py`).
 
-Two probe sets, no hand-labeling required:
-
-1. Leave-one-out self-retrieval over the CMV arguments. For each argument we
-   query with the same `topic` + `original_post` string the live graph uses
-   (see agents/graph/nodes/retrieve.py::retrieve_local) and check whether that
-   argument's own document comes back in the top-k. Reports Recall@k and MRR.
-   This is the metric that matters: the graph retrieves arguments that
-   countered a *similar* opposing post, and a document is the most relevant
-   answer to its own post.
-
-2. Legal-keyword probes. A handful of queries containing the rare exact tokens
-   ("San Remo paragraph 67", "Palmer Report blockade") that dense embeddings
-   handle worst — this is the narrow case where hybrid/BM25 would help, so it's
-   the canary to watch.
+Leave-one-out self-retrieval over the CMV arguments, no hand-labeling required.
+For each argument we query with the same `topic` + `original_post` string the
+live graph uses (see agents/graph/nodes/retrieve.py::retrieve_local) and check
+whether that argument's own document comes back in the top-k. Reports Recall@k
+and MRR. This is the metric that matters: the graph retrieves arguments that
+countered a *similar* opposing post, and a document is the most relevant answer
+to its own post.
 
 Needs the real corpus and OPENAI_API_KEY (it embeds queries), so it lives in
 `rag/` as a script, not in the offline `tests/` suite.
@@ -38,14 +31,6 @@ from dotenv import load_dotenv
 
 from agents.retrieval import CHROMA_DIR, COLLECTION_NAME, LocalRetriever, doc_count
 from rag.ingest_rag import INPUT_PARQUET
-
-# Legal-keyword probes: (query, substring that must appear in a retrieved chunk).
-# These target the exact-token weakness of dense-only retrieval.
-LEGAL_PROBES = [
-    ("Is a naval blockade lawful under international law?", "blockade"),
-    ("San Remo Manual paragraph 67 capture of vessels breaching a blockade", "San Remo"),
-    ("Palmer Report conclusion on the Gaza flotilla blockade", "Palmer"),
-]
 
 
 def _self_retrieval(df: pd.DataFrame, retriever: LocalRetriever, k: int) -> None:
@@ -83,15 +68,6 @@ def _self_retrieval(df: pd.DataFrame, retriever: LocalRetriever, k: int) -> None
             print(f"    ... and {len(misses) - 10} more")
 
 
-def _legal_probes(retriever: LocalRetriever, k: int) -> None:
-    print(f"\nLegal-keyword probes (k={k}):")
-    for query, needle in LEGAL_PROBES:
-        chunks = retriever.retrieve(query, k=k)
-        hit = any(needle.lower() in c.lower() for c in chunks)
-        mark = "ok " if hit else "MISS"
-        print(f"  [{mark}] {needle!r:14} <- {query[:60]!r}")
-
-
 def main(k: int = 4) -> None:
     load_dotenv()
     if not INPUT_PARQUET.exists():
@@ -103,13 +79,12 @@ def main(k: int = 4) -> None:
     if n_docs == 0:
         raise SystemExit(
             f"Collection '{COLLECTION_NAME}' at {CHROMA_DIR} is empty. "
-            "Run `uv run python -m rag.ingest_rag` (and rag.ingest_legal_sources) first."
+            "Run `uv run python -m rag.ingest_rag` first."
         )
     print(f"Corpus '{COLLECTION_NAME}': {n_docs} documents.")
 
     df = pd.read_parquet(INPUT_PARQUET)
     _self_retrieval(df, retriever, k)
-    _legal_probes(retriever, k)
 
 
 if __name__ == "__main__":

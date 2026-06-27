@@ -23,7 +23,6 @@ RAG_MODULES = [
     "rag.scrape_cmv_israel",
     "rag.classify_stance",
     "rag.ingest_rag",
-    "rag.ingest_legal_sources",
 ]
 
 
