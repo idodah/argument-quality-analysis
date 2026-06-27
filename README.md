@@ -187,38 +187,10 @@ Test-split metrics for each model (best run per model):
 
 The `agents` package wires a LangGraph workflow that drafts two candidate
 arguments, eliminates the weaker one up front on the Qwen ranker, then refines
-the survivor against retrieved evidence. Refinement is governed by four
-independent loops, each with its own cap:
-
-- **Grounding loop** (`hallucination_check -> refine`): re-refines while the
-  draft is ungrounded, up to `MAX_GROUND_RETRIES` times per refinement pass.
-- **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
-  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
-  up to `MAX_REFINE_ITERS` passes per generation.
-- **Regeneration loops** (`stance_check`/`early_stance_check ->
-  generate_initial`): if the draft is off-topic or anti-Israel, both drafts are
-  thrown out and regenerated. The early gate regenerates up to
-  `MAX_EARLY_REGEN_ITERS` times per generation.
-
-There are **two stance gates**: `early_stance_check` on the raw survivor
-(before any refinement, catches off-topic/anti survivors and regenerates
-immediately, so a hopeless draft never burns a full refinement loop) and the
-authoritative `stance_check` after `hallucination_check` (every argument that
-ships via the late gate has passed through the grounding pass).
-
-Four patterns are fused into the graph:
-
-- **Adaptive RAG** — each pass the router picks one of three routes: local
-  Chroma retrieval, Tavily web search, or `none` (skip retrieval entirely and
-  refine the current draft on the evidence already in hand).
-- **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
-  relevance and keeps only the relevant subset (triggering a web search if none
-  survive), and `hallucination_check` verifies the refined draft is grounded in
-  the evidence.
-- **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
-- **Reflexion** — every critique is accumulated into a running
-  `critique_history` that the refiner consumes in full, so it stops repeating
-  fixed mistakes.
+the survivor against retrieved evidence. The rest of this section builds up from
+the bottom: first the individual **graph nodes**, then how they wire into the
+**graph topology**, and finally the **loops**, **stance gates**, and **RAG
+patterns** that the wiring implements.
 
 ### Graph nodes
 
@@ -237,7 +209,7 @@ Four patterns are fused into the graph:
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
-- **router `none` arm** — routes straight to `reflect`: adds no new documents and
+- **skip_retrieval** — routes straight to `reflect`: adds no new documents and
   preserves the existing pool, so refinement still runs (and can cite
   previously-grounded facts) without fetching fresh evidence this pass.
 - **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
@@ -251,20 +223,21 @@ Four patterns are fused into the graph:
   superfluous). Each critique is appended to `critique_history` (Reflexion).
 - **refine** — rewrites the active side's draft using the full critique history
   plus any **fix notes** (ungrounded-claim issues from `hallucination_check`
-  and/or a stance reason from `stance_check`), attaching inline `[n]` citations
-  to evidence-backed claims. Drops an empty `### Sources` footer if the model
-  cited nothing.
+  and/or a stance reason from `stance_check`), attaching inline citations
+  to evidence-backed claims.
 - **hallucination_check** — Self-RAG binary groundedness check.
 - **stance_check** — classifies the refined draft as
   `pro_israel`, `neutral_needs_refine`
   or `off_topic_or_anti` (→ generate_initial, regeneration loop). It records a
   `regen_reason` the next pass must fix, and sets `gave_up=True` (→ finalize)
   when both the refinement and regeneration budgets are exhausted.
-- **finalize** — declares the surviving side the winner, publishes the
-  result as `generation`, surfaces any grounded / pro-Israel / gave-up warnings
-  (and whether grounding was verified), and prints the run's trajectory.
+- **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
+  grounded / pro-Israel / gave-up warnings (and whether grounding was verified),
+  and prints the run's trajectory.
 
-Run end-to-end:
+### Graph topology
+
+The nodes above wire into the graph below. Run it end-to-end with:
 
 ```bash
 uv run python -m agents.graph.builder \
@@ -272,9 +245,43 @@ uv run python -m agents.graph.builder \
   --post  "The original post body..."
 ```
 
-Graph topology:
-
 ![graph](graph.png)
+
+### Refinement loops
+
+Refinement is governed by four independent loops, each with its own cap:
+
+- **Grounding loop** (`hallucination_check -> refine`): re-refines while the
+  draft is ungrounded, up to `MAX_GROUND_RETRIES = 2` (2 grounding retries) per
+  refinement pass.
+- **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
+  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
+  up to `MAX_REFINE_ITERS = 3` (3 passes — the first pass plus 2 reroutes) per
+  generation.
+- **Early-regeneration loop** (`early_stance_check -> generate_initial`): if the
+  raw survivor is off-topic or anti-Israel, both drafts are thrown out and
+  regenerated before any refinement, up to `MAX_EARLY_REGEN_ITERS = 2` (2
+  regeneration retries) per generation.
+- **Late-regeneration loop** (`stance_check -> generate_initial`): if a refined
+  draft is still off-topic or anti-Israel, both drafts are regenerated, up to
+  `MAX_LATE_REGEN_ITERS = 1` (1 regeneration retry) across the whole run (each
+  regeneration resets the refinement counter).
+
+### RAG patterns
+
+Four patterns are fused into the graph:
+
+- **Adaptive RAG** — each pass the router picks one of three routes: local
+  Chroma retrieval, Tavily web search, or `none` (skip retrieval entirely and
+  refine the current draft on the evidence already in hand).
+- **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
+  relevance and keeps only the relevant subset (triggering a web search if none
+  survive), and `hallucination_check` verifies the refined draft is grounded in
+  the evidence.
+- **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
+- **Reflexion** — every critique is accumulated into a running
+  `critique_history` that the refiner consumes in full, so it stops repeating
+  fixed mistakes.
 
 ## Harvester
 
@@ -290,7 +297,7 @@ reviews and decides whether to post.
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
   │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
   │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py          │
-  │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB)  │
+  │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
             ▲
    fediverse/ adapters (Lemmy, PieFed, Reddit) — also exposed read-only via fediverse_mcp.py
@@ -308,33 +315,33 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
 ```
 
-Notifier setup: set `NTFY_TOPIC=cmv-<random>` in `.env` and subscribe to that
-topic in the ntfy app (optional `NTFY_SERVER`, `NTFY_TOKEN`). The agent graph
+Notifier setup: set `NTFY_TOPIC=cmv-<topic_name>` in `.env` and subscribe to that
+topic in the ntfy app. The agent graph
 also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`, `RANKER_PATH`,
 `HF_TOKEN`).
 
-Each run searches every platform, drops posts older than `--max-age-hours`
-(default 24) or already answered, and — if anything new is in window — answers up
-to `--max-generations` (default 3), Reddit-first then newest: classify → draft →
-notify. If nothing is new, it does nothing.
+Each run searches every platform and drops posts older than `--max-age-hours`
+(default 24) or already answered. Whatever new posts remain within that window it
+answers, Reddit-first then newest: classify → draft → notify. If nothing new is
+in window, it does nothing.
 
 #### Dedup guarantee
 
 Each post is answered **at most once, ever**. On first sight — before any
 classify/generate work — its **canonical id** (the ActivityPub `ap_id`, or the
-Reddit permalink) is claimed in a `seen` ledger.
+Reddit permalink) is recorded in a `seen` store.
 
 ### Files
 
 | File | Role |
 |------|------|
 | `orchestrate.py` | The entrypoint. Search → dedup/age/sort → classify → generate → notify. |
-| `fetch.py` | `fetch_from_rss()`: read the live Reddit Atom feed into `Post` objects (HTML → text). |
+| `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM anti-Israel stance classifier. |
 | `notify.py` | Send one ntfy push per generated response (the only outbound write). |
-| `tracking.py` | The `seen` dedup ledger + a `responses` store of generated rebuttals. |
+| `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse
 
@@ -370,5 +377,3 @@ user can craft a post), so it ships with input-trust-boundary defenses:
 - **SSRF** — `harvester/fediverse/base.py::assert_safe_url()` blocks outbound
   requests to private / loopback / link-local / reserved IPs (every resolved
   address checked, defeating DNS rebinding), guarding the cloud metadata endpoint.
-
-`tests/test_security.py` covers the SSRF guard and the injection neutralizer.
