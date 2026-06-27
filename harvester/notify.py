@@ -25,8 +25,13 @@ def _chunks(text: str, size: int = _MAX):
         yield text[i : i + size]
 
 
-def send(text: str) -> None:
-    """Push `text` to the configured ntfy topic, chunked under the size limit."""
+def send(text: str, click_url: str | None = None) -> None:
+    """Push `text` to the configured ntfy topic, chunked under the size limit.
+
+    If `click_url` is given, the notification is made tappable (ntfy `Click`
+    header) and gets an "Open post" action button (ntfy `Actions` header), both
+    pointing at the original source post so the operator can jump straight to it.
+    """
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         raise RuntimeError(
@@ -40,6 +45,11 @@ def send(text: str) -> None:
         "Title": "New CMV response",
         "Tags": "speech_balloon",
     }
+    # Only http(s) links are valid ntfy click/action targets; skip anything else
+    # (e.g. an empty url) so we never send a malformed header.
+    if click_url and click_url.startswith(("http://", "https://")):
+        headers["Click"] = click_url
+        headers["Actions"] = f"view, Open post, {click_url}"
     token = os.environ.get("NTFY_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"

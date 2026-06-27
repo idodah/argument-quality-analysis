@@ -67,9 +67,10 @@ SECURITY.md
 docs/
 
 # Harvester runtime artifacts (the harvester/ source itself IS tracked)
-harvester_tracking.db
+harvester_tracking*.db
 harvester_responses.jsonl
 harvester_orch.log
+harvester_week.out
 
 # Terraform local state / provider cache (the .tf source + .terraform.lock.hcl
 # provider lock ARE tracked; everything below is local-only or secret).
