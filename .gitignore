@@ -52,6 +52,7 @@ model.tar.gz
 .claude/projects/
 .claude/todos/
 .claude/shell-snapshots/
+.claude/skills/
 
 # CLI entrypoint (local-only)
 run.py
