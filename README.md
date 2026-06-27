@@ -252,18 +252,21 @@ uv run python -m agents.graph.builder \
 Refinement is governed by four independent loops, each with its own cap:
 
 - **Grounding loop** (`hallucination_check -> refine`): re-refines while the
-  draft is ungrounded, up to `MAX_GROUND_RETRIES` (2) times per refinement pass.
+  draft is ungrounded, up to `MAX_GROUND_RETRIES = 2` (2 grounding retries) per
+  refinement pass.
 - **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
   not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
-  up to `MAX_REFINE_ITERS` (3) passes per generation.
+  up to `MAX_REFINE_ITERS = 3` (3 passes — the first pass plus 2 reroutes) per
+  generation.
 - **Early-regeneration loop** (`early_stance_check -> generate_initial`): if the
   raw survivor is off-topic or anti-Israel, both drafts are thrown out and
-  regenerated before any refinement, up to `MAX_EARLY_REGEN_ITERS` (2) times per
-  generation.
+  regenerated before any refinement, up to `MAX_EARLY_REGEN_ITERS = 2` (2
+  regeneration retries) per generation.
 - **Late-regeneration loop** (`stance_check -> generate_initial`): if a refined
   draft is still off-topic or anti-Israel, both drafts are regenerated, up to
-  `MAX_LATE_REGEN_ITERS` (1) time across the whole run (each regeneration resets
-  the refinement counter).
+  `MAX_LATE_REGEN_ITERS = 1` (1 regeneration retry) across the whole run (each
+  regeneration resets the refinement counter).
+
 
 ### Two stance gates
 
