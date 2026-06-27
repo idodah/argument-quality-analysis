@@ -90,7 +90,7 @@ def _handle(thread, *, dry_run: bool, do_notify: bool) -> str:
             f"[{post.platform}] {post.title}", post.url, body, result["generation"],
             result["grounded"], result["pro_israel_reply"], result.get("sources"))
         try:
-            notify_mod.send(("[!] " if flagged else "") + summary)
+            notify_mod.send(("[!] " if flagged else "") + summary, click_url=post.url)
         except RuntimeError as e:
             print(f"  [warn] notify failed: {e}", file=sys.stderr)
 
