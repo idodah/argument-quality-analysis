@@ -187,38 +187,10 @@ Test-split metrics for each model (best run per model):
 
 The `agents` package wires a LangGraph workflow that drafts two candidate
 arguments, eliminates the weaker one up front on the Qwen ranker, then refines
-the survivor against retrieved evidence. Refinement is governed by four
-independent loops, each with its own cap:
-
-- **Grounding loop** (`hallucination_check -> refine`): re-refines while the
-  draft is ungrounded, up to `MAX_GROUND_RETRIES` times per refinement pass.
-- **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
-  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
-  up to `MAX_REFINE_ITERS` passes per generation.
-- **Regeneration loops** (`stance_check`/`early_stance_check ->
-  generate_initial`): if the draft is off-topic or anti-Israel, both drafts are
-  thrown out and regenerated. The early gate regenerates up to
-  `MAX_EARLY_REGEN_ITERS` times per generation.
-
-There are **two stance gates**: `early_stance_check` on the raw survivor
-(before any refinement, catches off-topic/anti survivors and regenerates
-immediately, so a hopeless draft never burns a full refinement loop) and the
-authoritative `stance_check` after `hallucination_check` (every argument that
-ships via the late gate has passed through the grounding pass).
-
-Four patterns are fused into the graph:
-
-- **Adaptive RAG** — each pass the router picks one of three routes: local
-  Chroma retrieval, Tavily web search, or `none` (skip retrieval entirely and
-  refine the current draft on the evidence already in hand).
-- **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
-  relevance and keeps only the relevant subset (triggering a web search if none
-  survive), and `hallucination_check` verifies the refined draft is grounded in
-  the evidence.
-- **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
-- **Reflexion** — every critique is accumulated into a running
-  `critique_history` that the refiner consumes in full, so it stops repeating
-  fixed mistakes.
+the survivor against retrieved evidence. The rest of this section builds up from
+the bottom: first the individual **graph nodes**, then how they wire into the
+**graph topology**, and finally the **loops**, **stance gates**, and **RAG
+patterns** that the wiring implements.
 
 ### Graph nodes
 
@@ -264,7 +236,9 @@ Four patterns are fused into the graph:
   result as `generation`, surfaces any grounded / pro-Israel / gave-up warnings
   (and whether grounding was verified), and prints the run's trajectory.
 
-Run end-to-end:
+### Graph topology
+
+The nodes above wire into the graph below. Run it end-to-end with:
 
 ```bash
 uv run python -m agents.graph.builder \
@@ -272,9 +246,49 @@ uv run python -m agents.graph.builder \
   --post  "The original post body..."
 ```
 
-Graph topology:
-
 ![graph](graph.png)
+
+### Refinement loops
+
+Refinement is governed by four independent loops, each with its own cap:
+
+- **Grounding loop** (`hallucination_check -> refine`): re-refines while the
+  draft is ungrounded, up to `MAX_GROUND_RETRIES` (2) times per refinement pass.
+- **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
+  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
+  up to `MAX_REFINE_ITERS` (3) passes per generation.
+- **Early-regeneration loop** (`early_stance_check -> generate_initial`): if the
+  raw survivor is off-topic or anti-Israel, both drafts are thrown out and
+  regenerated before any refinement, up to `MAX_EARLY_REGEN_ITERS` (2) times per
+  generation.
+- **Late-regeneration loop** (`stance_check -> generate_initial`): if a refined
+  draft is still off-topic or anti-Israel, both drafts are regenerated, up to
+  `MAX_LATE_REGEN_ITERS` (1) time across the whole run (each regeneration resets
+  the refinement counter).
+
+### Two stance gates
+
+There are **two stance gates**: `early_stance_check` on the raw survivor
+(before any refinement, catches off-topic/anti survivors and regenerates
+immediately, so a hopeless draft never burns a full refinement loop) and the
+authoritative `stance_check` after `hallucination_check` (every argument that
+ships via the late gate has passed through the grounding pass).
+
+### RAG patterns
+
+Four patterns are fused into the graph:
+
+- **Adaptive RAG** — each pass the router picks one of three routes: local
+  Chroma retrieval, Tavily web search, or `none` (skip retrieval entirely and
+  refine the current draft on the evidence already in hand).
+- **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
+  relevance and keeps only the relevant subset (triggering a web search if none
+  survive), and `hallucination_check` verifies the refined draft is grounded in
+  the evidence.
+- **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
+- **Reflexion** — every critique is accumulated into a running
+  `critique_history` that the refiner consumes in full, so it stops repeating
+  fixed mistakes.
 
 ## Harvester
 
