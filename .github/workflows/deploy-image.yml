@@ -52,6 +52,23 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ECR does not auto-create repositories on push, and the account may be
+      # cold (e.g. the stack was torn down to stop costs). Create the repo if it
+      # is missing so the push below doesn't fail. Idempotent, and the attributes
+      # match ecr.tf so a later `terraform apply` adopts/imports it cleanly.
+      # Empty repos are free — you only pay for stored image bytes.
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "${{ vars.ECR_REPOSITORY }}" \
+            --region "${{ vars.AWS_REGION }}" >/dev/null 2>&1 \
+          || aws ecr create-repository \
+            --repository-name "${{ vars.ECR_REPOSITORY }}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --image-tag-mutability MUTABLE \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
       # .chroma/ is a generated, gitignored artifact (not in the checkout). Pull
       # the prebuilt corpus from S3 so `COPY .chroma/` in the Dockerfile finds it.
       # Falls back to an empty dir so the build still succeeds if the corpus isn't
