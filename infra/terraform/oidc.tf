@@ -104,6 +104,9 @@ data "aws_iam_policy_document" "ci" {
     sid = "ManageStack"
     actions = [
       "ec2:*", "ecs:*", "ecr:Describe*", "ecr:List*",
+      # CreateRepository + lifecycle so deploy-image CI can self-heal a missing
+      # repo on a cold account (see the "Ensure ECR repository exists" step).
+      "ecr:CreateRepository", "ecr:PutLifecyclePolicy", "ecr:TagResource",
       "iam:*Role*", "iam:*Policy*", "iam:GetRole", "iam:PassRole", "iam:TagRole",
       "iam:CreateOpenIDConnectProvider", "iam:GetOpenIDConnectProvider",
       "dynamodb:CreateTable", "dynamodb:Describe*", "dynamodb:UpdateTable", "dynamodb:TagResource", "dynamodb:ListTagsOfResource",
