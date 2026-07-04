@@ -33,9 +33,46 @@ FEATURES = Features({
 
 
 def token_length(tokenizer, text) -> int:
+    """Number of tokens in ``text`` under the ranker's tokenizer (0 if empty/None)."""
     if text is None or not str(text).strip():
         return 0
     return len(tokenizer.encode(str(text), add_special_tokens=False))
+
+
+def add_token_counts(df: pd.DataFrame, tokenizer) -> list[str]:
+    """Add a ``{field}_n_tokens`` column for each text field present; return their names."""
+    token_cols = []
+    for field in ["topic", "original_post", "delta_argument", "nodelta_argument"]:
+        if field not in df.columns:
+            continue
+        col = f"{field}_n_tokens"
+        df[col] = [token_length(tokenizer, t) for t in df[field].values]
+        token_cols.append(col)
+    return token_cols
+
+
+def apply_token_filters(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop pairs whose arguments fall outside [MIN_TOKENS, MAX_TOKENS], whose post
+    exceeds MAX_ORIGINAL_POST_TOKENS, or whose two arguments differ in length by
+    more than MAX_LENGTH_RATIO — printing how many rows each step keeps."""
+    before = len(df)
+    mask = (
+        df["delta_argument_n_tokens"].between(MIN_TOKENS, MAX_TOKENS)
+        & df["nodelta_argument_n_tokens"].between(MIN_TOKENS, MAX_TOKENS)
+    )
+    df = df[mask].reset_index(drop=True)
+    after_len = len(df)
+    print(f"Kept {after_len}/{before} rows after filtering arguments to [{MIN_TOKENS}, {MAX_TOKENS}] tokens.")
+
+    df = df[df["original_post_n_tokens"] <= MAX_ORIGINAL_POST_TOKENS].reset_index(drop=True)
+    after_post = len(df)
+    print(f"Kept {after_post}/{after_len} rows after filtering original_post to <= {MAX_ORIGINAL_POST_TOKENS} tokens.")
+
+    longer = df[["delta_argument_n_tokens", "nodelta_argument_n_tokens"]].max(axis=1)
+    shorter = df[["delta_argument_n_tokens", "nodelta_argument_n_tokens"]].min(axis=1)
+    df = df[(longer / shorter) <= MAX_LENGTH_RATIO].reset_index(drop=True)
+    print(f"Kept {len(df)}/{after_post} rows after length-ratio filter (<= {MAX_LENGTH_RATIO}x).")
+    return df
 
 
 def main() -> None:
@@ -46,41 +83,14 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=hf_token)
 
-    ds = load_dataset(HF_REPO_ID, split=INPUT_SPLIT)
-    df = ds.to_pandas()
-    before = len(df)
-    print(f"Loaded {before} rows from split '{INPUT_SPLIT}'.")
+    df = load_dataset(HF_REPO_ID, split=INPUT_SPLIT).to_pandas()
+    print(f"Loaded {len(df)} rows from split '{INPUT_SPLIT}'.")
 
-    token_cols = []
-    for field in ["topic", "original_post", "delta_argument", "nodelta_argument"]:
-        if field not in df.columns:
-            continue
-        col = f"{field}_n_tokens"
-        df[col] = [token_length(tokenizer, t) for t in df[field].values]
-        token_cols.append(col)
-
+    token_cols = add_token_counts(df, tokenizer)
     print("\nToken length stats:")
     print(df[token_cols].describe().to_string())
 
-    mask = (
-        df["delta_argument_n_tokens"].between(MIN_TOKENS, MAX_TOKENS)
-        & df["nodelta_argument_n_tokens"].between(MIN_TOKENS, MAX_TOKENS)
-    )
-    df = df[mask].reset_index(drop=True)
-    after_len = len(df)
-    print(f"Kept {after_len}/{before} rows after filtering arguments to [{MIN_TOKENS}, {MAX_TOKENS}] tokens.")
-
-    post_mask = df["original_post_n_tokens"] <= MAX_ORIGINAL_POST_TOKENS
-    df = df[post_mask].reset_index(drop=True)
-    after_post = len(df)
-    print(f"Kept {after_post}/{after_len} rows after filtering original_post to <= {MAX_ORIGINAL_POST_TOKENS} tokens.")
-
-    longer = df[["delta_argument_n_tokens", "nodelta_argument_n_tokens"]].max(axis=1)
-    shorter = df[["delta_argument_n_tokens", "nodelta_argument_n_tokens"]].min(axis=1)
-    ratio_mask = (longer / shorter) <= MAX_LENGTH_RATIO
-    df = df[ratio_mask].reset_index(drop=True)
-    after = len(df)
-    print(f"Kept {after}/{after_post} rows after length-ratio filter (<= {MAX_LENGTH_RATIO}x).")
+    df = apply_token_filters(df)
 
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -91,7 +101,7 @@ def main() -> None:
     df_hub = df.drop(columns=token_cols)
     out_ds = Dataset.from_pandas(df_hub, preserve_index=False, features=FEATURES)
     out_ds.push_to_hub(HF_REPO_ID, token=hf_token, split=OUTPUT_SPLIT, private=False)
-    print(f"Pushed {after} rows to https://huggingface.co/datasets/{HF_REPO_ID} (split='{OUTPUT_SPLIT}').")
+    print(f"Pushed {len(df)} rows to https://huggingface.co/datasets/{HF_REPO_ID} (split='{OUTPUT_SPLIT}').")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,9 @@ LENGTH_WEIGHT = 1.0
 SCORE_WEIGHT = 0.5
 
 
+# Both source corpora are fetched on first import (multi-GB, cached on disk).
+# Importing this module — e.g. via preprocess.py — will trigger the downloads
+# if the directories are absent.
 if not os.path.exists("./Webis-CMV-20"):
     zenodo_download("3778298", output_dir="./Webis-CMV-20")
 
@@ -29,17 +32,23 @@ if not os.path.exists("./winning-args-corpus/winning-args-corpus"):
 
 
 def _valid_body(body: str | None) -> bool:
+    """True if the comment body is real text (not empty or a Reddit deletion placeholder)."""
     return bool(body) and body not in ("[deleted]", "[removed]")
 
 
 def _match_score(delta_len: int, delta_score: float, cand_len: int, cand_score: float) -> float:
-    """Lower is better. Combines log-length distance and log-score distance."""
+    """Weighted log-distance between a delta comment and a non-delta candidate on
+    length and Reddit score (lower = better match), used to pick per-delta counterparts
+    that differ in persuasive quality."""
     len_dist = abs(math.log1p(delta_len) - math.log1p(cand_len))
     score_dist = abs(math.log1p(max(delta_score, 0)) - math.log1p(max(cand_score, 0)))
     return LENGTH_WEIGHT * len_dist + SCORE_WEIGHT * score_dist
 
 
 def _get_delta_comment(comment_entry, submission_id):
+    """Return the top-level, non-deleted reply to ``submission_id`` that earned a
+    delta; deeper replies are ignored since they don't rebut the OP
+    directly."""
     for c in comment_entry.get("comments", []):
         if c.get("delta") is True and c.get("level") == 0 and c.get("parent_id") == submission_id:
             if _valid_body(c.get("body", "")):
@@ -47,30 +56,42 @@ def _get_delta_comment(comment_entry, submission_id):
     return None
 
 
-def _get_matched_nodelta_comment(comment_entry, submission_id, delta_comment):
-    """Pick the top-level non-delta reply whose (length, score) is closest to the delta."""
-    delta_len = len(delta_comment.get("body", ""))
-    delta_score = float(delta_comment.get("score") or 0)
+def _closest_nodelta(delta_body: str, delta_score: float, candidates: list[tuple[str, float]]) -> int | None:
+    """Index of the candidate ``(body, score)`` closest to the delta by :func:`_match_score`.
 
-    best = None
+    Candidates with an invalid body are skipped; returns ``None`` if none qualify.
+    """
+    delta_len = len(delta_body)
+    best_idx = None
     best_dist = math.inf
-    for c in comment_entry.get("comments", []):
-        if c.get("delta") is True:
+    for i, (body, score) in enumerate(candidates):
+        if not _valid_body(body):
             continue
-        if c.get("level") != 0 or c.get("parent_id") != submission_id:
-            continue
-        if not _valid_body(c.get("body", "")):
-            continue
-        cand_len = len(c["body"])
-        cand_score = float(c.get("score") or 0)
-        dist = _match_score(delta_len, delta_score, cand_len, cand_score)
+        dist = _match_score(delta_len, delta_score, len(body), float(score or 0))
         if dist < best_dist:
             best_dist = dist
-            best = c
-    return best
+            best_idx = i
+    return best_idx
+
+
+def _get_matched_nodelta_comment(comment_entry, submission_id, delta_comment):
+    """Pick the top-level non-delta reply whose (length, score) is closest to the delta."""
+    delta_score = float(delta_comment.get("score") or 0)
+    replies = [
+        c for c in comment_entry.get("comments", [])
+        if c.get("delta") is not True and c.get("level") == 0 and c.get("parent_id") == submission_id
+    ]
+    idx = _closest_nodelta(
+        delta_comment.get("body", ""), delta_score,
+        [(c.get("body", ""), c.get("score")) for c in replies],
+    )
+    return replies[idx] if idx is not None else None
 
 
 def build_webis_raw() -> list[ArgumentPair]:
+    """Build ``ArgumentPair`` rows from Webis-CMV-20, keeping one delta plus its
+    closest non-delta top-level reply per submission and skipping any thread
+    where the OP or either side is missing or deleted."""
     rows = []
     with bz2.open(WEBIS_DIR / "pairs.jsonl.bz2", "rt") as f:
         for line in f:
@@ -107,7 +128,14 @@ def build_webis_raw() -> list[ArgumentPair]:
     return rows
 
 
-def build_winning_raw() -> list[ArgumentPair]:
+def _load_winning_corpus():
+    """Load the winning-args-corpus and derive what :func:`build_winning_raw` needs.
+
+    Returns ``(utterances, conversations, pair_groups, thread_date)`` where
+    ``pair_groups`` maps each ``pair_id`` to the utterance ids the corpus authors
+    paired up, and ``thread_date`` maps each thread root to the date of its
+    earliest reply (both computed in a single pass over the utterances).
+    """
     utterances: dict[str, dict] = {}
     with open(WINNING_DIR / "utterances.jsonl") as f:
         for line in f:
@@ -117,21 +145,35 @@ def build_winning_raw() -> list[ArgumentPair]:
     with open(WINNING_DIR / "conversations.json") as f:
         conversations = json.load(f)
 
-    thread_min_ts: dict[str, int | None] = defaultdict(lambda: None)
-    for u in utterances.values():
+    pair_groups: dict[str, list[str]] = defaultdict(list)
+    thread_min_ts: dict[str, int] = {}
+    for uid, u in utterances.items():
+        for pid in (u["meta"].get("pair_ids") or []):
+            pair_groups[pid].append(uid)
         ts = u.get("timestamp")
         if ts and u["root"] != u["id"]:
             root = u["root"]
-            if thread_min_ts[root] is None or ts < thread_min_ts[root]:
+            if root not in thread_min_ts or ts < thread_min_ts[root]:
                 thread_min_ts[root] = ts
 
-    pairs: dict[str, list[str]] = defaultdict(list)
-    for uid, u in utterances.items():
-        for pid in (u["meta"].get("pair_ids") or []):
-            pairs[pid].append(uid)
+    thread_date = {}
+    for root, ts in thread_min_ts.items():
+        try:
+            thread_date[root] = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+        except (ValueError, TypeError):
+            thread_date[root] = None
+
+    return utterances, conversations, pair_groups, thread_date
+
+
+def build_winning_raw() -> list[ArgumentPair]:
+    """Build ``ArgumentPair`` rows from the ConvoKit winning-args-corpus, emitting
+    one pair per successful direct reply matched 1-to-1 with its closest
+    unsuccessful sibling."""
+    utterances, conversations, pair_groups, thread_date = _load_winning_corpus()
 
     rows = []
-    for pid, uids in pairs.items():
+    for uids in pair_groups.values():
         uids = [uid for uid in uids if uid in utterances]
         if not uids:
             continue
@@ -143,13 +185,7 @@ def build_winning_raw() -> list[ArgumentPair]:
         if not title or not op_text:
             continue
 
-        min_ts = thread_min_ts[root_id]
-        date = None
-        if min_ts:
-            try:
-                date = datetime.fromtimestamp(min_ts, tz=timezone.utc).date()
-            except (ValueError, TypeError):
-                pass
+        date = thread_date.get(root_id)
 
         direct_replies = [uid for uid in uids if utterances[uid]["reply-to"] == utterances[uid]["root"]]
         delta_uids = [uid for uid in direct_replies if utterances[uid]["meta"].get("success") == 1]
@@ -158,29 +194,17 @@ def build_winning_raw() -> list[ArgumentPair]:
         # Each delta argument is matched to its single closest nodelta argument
         # by (length, score) — avoids the cross-product blow-up of the old code,
         # which paired every delta with every nodelta and biased the data.
+        nodelta_us = [utterances[uid] for uid in nodelta_uids]
+        candidates = [(u["text"], u["meta"].get("score")) for u in nodelta_us]
         for d_uid in delta_uids:
             delta_u = utterances[d_uid]
             delta_body = delta_u["text"]
             if not _valid_body(delta_body):
                 continue
-            delta_len = len(delta_body)
             delta_score = float(delta_u["meta"].get("score") or 0)
 
-            best_nd = None
-            best_dist = math.inf
-            for nd_uid in nodelta_uids:
-                nd_u = utterances[nd_uid]
-                nd_body = nd_u["text"]
-                if not _valid_body(nd_body):
-                    continue
-                cand_len = len(nd_body)
-                cand_score = float(nd_u["meta"].get("score") or 0)
-                dist = _match_score(delta_len, delta_score, cand_len, cand_score)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_nd = nd_u
-
-            if best_nd is None:
+            idx = _closest_nodelta(delta_body, delta_score, candidates)
+            if idx is None:
                 continue
 
             rows.append(ArgumentPair(
@@ -188,15 +212,20 @@ def build_winning_raw() -> list[ArgumentPair]:
                 topic=title,
                 original_post=op_text,
                 delta_argument=delta_body,
-                nodelta_argument=best_nd["text"],
+                nodelta_argument=nodelta_us[idx]["text"],
                 date=date,
             ))
     return rows
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Build the raw pair-wise dataset from both sources and write it to CSV."""
     pairs = build_webis_raw() + build_winning_raw()
     df = pd.DataFrame([p.model_dump() for p in pairs])
     df = df[df["delta_argument"] != df["nodelta_argument"]]
     df.to_csv("data/argument_quality_dataset.csv", index=False)
     print(f"Dataset saved: {len(df)} rows, {df['thread_id'].nunique()} unique threads")
+
+
+if __name__ == "__main__":
+    main()

@@ -6,13 +6,9 @@ Pipeline:
   2. Clean text, normalize topics, drop empty/duplicate pairs
   3. Keep the longest original_post per thread
   4. Save a local parquet copy and upload to the Hugging Face Hub (split='full')
-
-Downstream, `filter_by_similarity` and `filter_by_tokens` further filter this
-'full' split into the 'filtered' / 'filtered_v2' splits the models train on.
 """
 
 import os
-import re
 from datetime import date as _date
 from pathlib import Path
 
@@ -22,7 +18,7 @@ from dotenv import load_dotenv
 from schemas import ArgumentPair
 
 from .data_creation import build_webis_raw, build_winning_raw
-from .text_utils import clean_text
+from .text_utils import clean_text, normalize_topic, strip_edit_paragraphs
 
 load_dotenv()
 
@@ -30,23 +26,15 @@ HF_REPO_ID = "idodah/argument-quality-cmv"
 OUT_PARQUET = Path("./data/argument_quality_preprocessed.parquet")
 
 
-_EDIT_PARAGRAPH_RE = re.compile(r"^\s*edit\b.*?(?=\n\s*\n|\Z)", re.IGNORECASE | re.DOTALL | re.MULTILINE)
-
-
-def _strip_edit_paragraphs(text: str) -> str:
-    text = _EDIT_PARAGRAPH_RE.sub("", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
-
-
 def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
+    """Normalize topics, clean/strip text, drop empty or identical pairs, dedup on
+    (delta, nodelta), and coerce dates into a DataFrame."""
     rows = []
     for p in pairs:
-        topic = re.sub(r"^CMV:\s*", "", p.topic, flags=re.IGNORECASE).strip()
-        topic = re.sub(r"[.\s]*cmv\s*\.?\s*$", "", topic, flags=re.IGNORECASE).strip()
-        original_post = _strip_edit_paragraphs(clean_text(p.original_post))
-        delta_argument = _strip_edit_paragraphs(clean_text(p.delta_argument))
-        nodelta_argument = _strip_edit_paragraphs(clean_text(p.nodelta_argument))
+        topic = normalize_topic(p.topic)
+        original_post = strip_edit_paragraphs(clean_text(p.original_post))
+        delta_argument = strip_edit_paragraphs(clean_text(p.delta_argument))
+        nodelta_argument = strip_edit_paragraphs(clean_text(p.nodelta_argument))
 
         if not original_post or not delta_argument or not nodelta_argument:
             continue
@@ -54,12 +42,12 @@ def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
             continue
 
         rows.append(ArgumentPair(
-            thread_id= p.thread_id,
-            topic= topic,
-            original_post= original_post,
-            delta_argument= delta_argument,
-            nodelta_argument= nodelta_argument,
-            date= p.date
+            thread_id=p.thread_id,
+            topic=topic,
+            original_post=original_post,
+            delta_argument=delta_argument,
+            nodelta_argument=nodelta_argument,
+            date=p.date,
         ))
 
     seen = set()
@@ -84,6 +72,7 @@ def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
 
 
 def upload_to_hub(df: pd.DataFrame, repo_id: str = HF_REPO_ID) -> None:
+    """Push `df` to the Hugging Face Hub as split='full' with an explicit string/date schema."""
     from datasets import Dataset, Features, Value
 
     token = os.environ.get("HF_TOKEN")
@@ -103,7 +92,21 @@ def upload_to_hub(df: pd.DataFrame, repo_id: str = HF_REPO_ID) -> None:
     print(f"Uploaded to https://huggingface.co/datasets/{repo_id}")
 
 
-if __name__ == "__main__":
+def _use_longest_post_per_thread(df: pd.DataFrame) -> pd.DataFrame:
+    """Give every row of a thread the longest ``original_post`` seen for that thread
+    (different pairs from one thread may carry differently-truncated copies)."""
+    longest = (
+        df.assign(_len=df["original_post"].str.len())
+        .sort_values("_len", ascending=False)
+        .drop_duplicates("thread_id")
+        .set_index("thread_id")["original_post"]
+    )
+    df["original_post"] = df["thread_id"].map(longest)
+    return df
+
+
+def main() -> None:
+    """Parse both sources, clean/dedup into the 'full' split, and upload it to the Hub."""
     if not os.environ.get("HF_TOKEN"):
         raise EnvironmentError("HF_TOKEN not set. Add it to your .env file.")
 
@@ -124,13 +127,7 @@ if __name__ == "__main__":
     if df.empty:
         raise RuntimeError("No rows survived filtering — aborting before upload.")
 
-    longest_per_thread = (
-        df.assign(_len=df["original_post"].str.len())
-        .sort_values("_len", ascending=False)
-        .drop_duplicates("thread_id")
-        .set_index("thread_id")["original_post"]
-    )
-    df["original_post"] = df["thread_id"].map(longest_per_thread)
+    df = _use_longest_post_per_thread(df)
 
     print(f"\nFinal dataset: {len(df)} rows, {df['thread_id'].nunique()} unique threads")
     print(f"\nNull counts:\n{df.isnull().sum().to_string()}")
@@ -140,3 +137,7 @@ if __name__ == "__main__":
     print("Done.")
 
     upload_to_hub(df)
+
+
+if __name__ == "__main__":
+    main()
