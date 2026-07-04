@@ -20,6 +20,8 @@ from schemas import ArgumentPair
 from .data_creation import build_webis_raw, build_winning_raw
 from .text_utils import clean_text, normalize_topic, strip_edit_paragraphs
 
+from datasets import Dataset, Features, Value
+
 load_dotenv()
 
 HF_REPO_ID = "idodah/argument-quality-cmv"
@@ -73,7 +75,6 @@ def _enrich(pairs: list[ArgumentPair]) -> pd.DataFrame:
 
 def upload_to_hub(df: pd.DataFrame, repo_id: str = HF_REPO_ID) -> None:
     """Push `df` to the Hugging Face Hub as split='full' with an explicit string/date schema."""
-    from datasets import Dataset, Features, Value
 
     token = os.environ.get("HF_TOKEN")
     if not token:

@@ -1,5 +1,8 @@
 """
-Shared data loading, splitting, and pair-shuffling utilities.
+Shared utilities used by every model in this folder:
+  - data loading, chronological splitting, and pair-shuffling
+  - prompt construction (pair-wise and single-argument ranking prompts)
+  - metrics (`evaluate`) and results persistence (`save_results`)
 """
 
 import random
@@ -10,6 +13,9 @@ import numpy as np
 import pandas as pd
 from datasets import load_dataset
 
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+
+
 RESULTS_PATH = Path(__file__).resolve().parent.parent / "results.csv"
 RESULTS_COLUMNS = ["model", "split", "n_train", "accuracy", "precision", "recall", "f1", "roc_auc", "timestamp"]
 
@@ -18,6 +24,7 @@ HF_REPO_ID = "idodah/argument-quality-cmv"
 
 
 def load_data() -> pd.DataFrame:
+    """Load the CMV pair dataset from HF, parse dates, drop incomplete rows, sort by date."""
     ds = load_dataset(HF_REPO_ID, split="filtered_v2")
     df = ds.to_pandas()
     df["date"] = pd.to_datetime(df["date"])
@@ -27,7 +34,7 @@ def load_data() -> pd.DataFrame:
 
 
 def split_by_date(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    # Rank threads by their earliest date, then cut at 80/90% of unique threads.
+    """Split into (train, val, test) chronologically by thread, 80/10/10 with no thread overlap."""
     thread_min_date = df.groupby("thread_id")["date"].min().sort_values()
     n = len(thread_min_date)
     train_threads = set(thread_min_date.iloc[: int(n * 0.80)].index)
@@ -45,7 +52,7 @@ def shuffle_pairs(df: pd.DataFrame, seed: int = RANDOM_SEED) -> tuple[dict[str, 
     Returns:
       fields — dict with keys "topic", "original_post", "arg_a", "arg_b",
                each an (N,) array of strings
-      labels — (N,) array where 1 means arg_a is the delta argument
+      labels — (N,) array where 1 means arg_a is the delta argument and 0 means arg_b is the delta argument
     """
     rng = random.Random(seed)
     topics, posts, arg_as, arg_bs, labels = [], [], [], [], []
@@ -85,12 +92,7 @@ RANK_SYSTEM_PROMPT = (
 
 
 def make_rank_prompt(topic: str, post: str, argument: str) -> dict:
-    """Single-argument prompt used by the pair-wise ranking head.
-
-    The '### Post\\n' and '\\n\\n### Response' markers below are parsed by
-    qwen._trim_prompt_to_length to locate the post for length-trimming — keep
-    them in sync if you change this format, or trimming raises ValueError.
-    """
+    """Single-argument prompt used by the pair-wise ranking head."""
     user = (
         f"### Topic\n{topic}\n\n"
         f"### Post\n{post}\n\n"
@@ -142,7 +144,7 @@ def save_results(results: list[dict], path: Path = RESULTS_PATH) -> pd.DataFrame
 
 
 def evaluate(name: str, y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray | None = None) -> dict:
-    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+    """Compute accuracy/precision/recall/f1 (and roc_auc if probabilities given) as a result dict."""
     result = {
         "model": name,
         "accuracy": round(accuracy_score(y_true, y_pred), 4),

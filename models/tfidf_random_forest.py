@@ -3,7 +3,7 @@
 Uses the shared order-invariant featurizer (`models.tfidf_features.PairTfidf`):
 context fields as-is, the two arguments as a signed tfidf difference, so an
 A<->B swap negates the argument features and the model can't learn a positional
-shortcut. See that module's docstring for the rationale.
+shortcut.
 """
 
 from sklearn.ensemble import RandomForestClassifier
@@ -15,6 +15,7 @@ _MAX_FEATURES = 10_000
 
 
 def run(train_fields, train_labels, val_fields, val_labels, test_fields, test_labels, **_) -> list[dict]:
+    """Fit the featurizer + Random Forest on train, then return val/test metrics."""
     featurizer = PairTfidf(max_features=_MAX_FEATURES).fit(train_fields)
     X_train = featurizer.transform(train_fields)
     X_val = featurizer.transform(val_fields)

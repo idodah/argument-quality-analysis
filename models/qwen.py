@@ -7,11 +7,13 @@ inference we score both candidates and pick the higher — order-invariant by
 construction (no A/B token, no two-order averaging).
 
 Usage:
-    python -m models.qwen
+    uv run python -m models.qwen
 """
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+from huggingface_hub import hf_hub_download, snapshot_download
 
 import numpy as np
 import torch
@@ -60,6 +62,7 @@ BNB_CONFIG = BitsAndBytesConfig(
 
 
 def _format_prompt(prompt: dict) -> str:
+    """Flatten a {system, user} prompt dict into a single string."""
     return f"{prompt['system']}\n\n{prompt['user']}"
 
 
@@ -92,6 +95,7 @@ def _trim_prompt_to_length(prompt: dict, tokenizer) -> str:
 
 
 def _tokenize_single(text: str, tokenizer) -> dict:
+    """Tokenize one prompt string, truncating to MAX_LENGTH without padding."""
     return tokenizer(text, truncation=True, max_length=MAX_LENGTH, padding=False)
 
 
@@ -128,6 +132,7 @@ class PairCollator:
         self.pad_to_multiple_of = pad_to_multiple_of
 
     def _pad_side(self, batch: list[dict], key_ids: str, key_mask: str) -> dict:
+        """Pad one side (delta or nodelta) of the batch to a common length."""
         features = [{"input_ids": b[key_ids], "attention_mask": b[key_mask]} for b in batch]
         padded = self.tokenizer.pad(
             features,
@@ -138,6 +143,7 @@ class PairCollator:
         return padded
 
     def __call__(self, batch: list[dict]) -> dict:
+        """Collate a batch into padded delta and nodelta tensor pairs."""
         delta = self._pad_side(batch, "delta_input_ids", "delta_attention_mask")
         nodelta = self._pad_side(batch, "nodelta_input_ids", "nodelta_attention_mask")
         return {
@@ -160,12 +166,15 @@ class RankingModel(nn.Module):
         nn.init.normal_(self.score_head.weight, mean=0.0, std=0.02)
 
     def gradient_checkpointing_enable(self, **kwargs):
+        """Delegate gradient checkpointing enable to the base model."""
         self.base.gradient_checkpointing_enable(**kwargs)
 
     def gradient_checkpointing_disable(self):
+        """Delegate gradient checkpointing disable to the base model."""
         self.base.gradient_checkpointing_disable()
 
     def score(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        """Scalar persuasiveness score per sequence: score head over mean-pooled hidden states."""
         out = self.base(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -182,6 +191,7 @@ class RankingModel(nn.Module):
         return scores
 
     def forward(self, return_loss: bool = True, **batch):
+        """Score both sides and return the margin ranking loss plus the two score tensors."""
         # `return_loss=True` default lets HF Trainer detect that this model
         # computes its own loss without a `labels` input, so eval_loss is
         # captured during evaluation.
@@ -193,12 +203,17 @@ class RankingModel(nn.Module):
 
 
 class RankingTrainer(Trainer):
+    """HF Trainer for the ranker: uses the model's own margin-ranking loss and saves
+    the QLoRA layout (adapter + score head + tokenizer)."""
+
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """Run the model and surface its self-computed loss to the HF Trainer."""
         outputs = model(**inputs)
         loss = outputs["loss"]
         return (loss, outputs) if return_outputs else loss
 
     def _save(self, output_dir: str | None = None, state_dict=None) -> None:
+        """Save adapter + score head + tokenizer instead of the un-serializable full model."""
         # Default Trainer._save would call state_dict() on the full RankingModel,
         # which under QLoRA includes ~8B 4-bit-quantized base params that
         # safetensors can't round-trip. Save the same layout as save_model()
@@ -225,6 +240,7 @@ class BestCheckpointTracker(TrainerCallback):
         self.best_checkpoint: str | None = None
 
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        """On each eval, remember the checkpoint path if its eval_loss is the best so far."""
         if metrics is None or "eval_loss" not in metrics:
             return
         loss = metrics["eval_loss"]
@@ -236,6 +252,7 @@ class BestCheckpointTracker(TrainerCallback):
 
 
 def _load_model():
+    """Build a fresh 4-bit QLoRA RankingModel + tokenizer for training."""
     hf_token = os.environ.get("HF_TOKEN")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=hf_token)
     tokenizer.pad_token = tokenizer.eos_token
@@ -282,7 +299,6 @@ def load_model(path: str | Path) -> tuple["RankingModel", "AutoTokenizer"]:
         tokenizer_src = local_dir / "tokenizer"
         score_head_path = local_dir / "score_head.pt"
     else:
-        from huggingface_hub import hf_hub_download, snapshot_download
 
         repo_root = snapshot_download(repo_id=str(path), token=hf_token)
         adapter_src = Path(repo_root) / "adapter"
@@ -334,6 +350,7 @@ def score_pair(model: "RankingModel", tokenizer, topic: str, post: str, arg_a: s
 
 
 def _predict(model, tokenizer, fields: dict, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Score both arguments per row, returning (preds, P(arg_a is delta)) arrays."""
     model.eval()
     preds, probs = [], []
     for i in range(len(labels)):
@@ -373,6 +390,7 @@ def run(
     test_labels,
     **_,
 ) -> list[dict]:
+    """Fine-tune the ranker, reload the best checkpoint, and evaluate on val + test."""
     model_name = "qwen_qlora_rank"
 
     model, tokenizer = _load_model()
@@ -439,8 +457,8 @@ def run(
     return results
 
 
-if __name__ == "__main__":
-    from dotenv import load_dotenv
+def main() -> None:
+    """Load and split the data, fine-tune + evaluate the ranker, and save results."""
     load_dotenv()
 
     df = load_data()
@@ -457,3 +475,7 @@ if __name__ == "__main__":
     save_results(results)
     for r in results:
         print(r)
+
+
+if __name__ == "__main__":
+    main()

@@ -6,7 +6,7 @@ chooses "A" or "B". Probability of A is calibrated from the top-logprob
 distribution at the answer token.
 
 Usage:
-    python -m models.gpt_5_4_nano
+    uv run python -m models.gpt_5_4_nano
 """
 
 import math
@@ -14,6 +14,7 @@ import os
 import time
 
 import numpy as np
+from dotenv import load_dotenv
 from openai import OpenAI
 
 from models.data import RANDOM_SEED, evaluate, load_data, make_prompt, save_results, shuffle_pairs, split_by_date
@@ -89,6 +90,7 @@ def _parse_choice_text(text: str) -> tuple[int, float]:
 
 
 def _predict(client: OpenAI, fields: dict, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Predict every pair in the test set, returning (preds, P(A)) arrays."""
     preds, probs = [], []
     n = len(labels)
     for i in range(n):
@@ -107,6 +109,7 @@ def _predict(client: OpenAI, fields: dict, labels: np.ndarray) -> tuple[np.ndarr
 
 
 def run(test_fields, test_labels, **_) -> list[dict]:
+    """Run the zero-shot eval over the test set and return its metrics row."""
     model_name = "gpt_5_4_nano"
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -114,8 +117,8 @@ def run(test_fields, test_labels, **_) -> list[dict]:
     return [{**evaluate(model_name, test_labels, y_pred, y_prob), "split": "test"}]
 
 
-if __name__ == "__main__":
-    from dotenv import load_dotenv
+def main() -> None:
+    """Load and split the data, run the zero-shot eval on the test set, and save results."""
     load_dotenv()
 
     df = load_data()
@@ -126,3 +129,7 @@ if __name__ == "__main__":
     save_results(results)
     for r in results:
         print(r)
+
+
+if __name__ == "__main__":
+    main()

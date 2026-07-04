@@ -145,7 +145,7 @@ The two arguments share one TF-IDF vocabulary, and the classifier sees their
 side by side (the topic and post are vectorized separately as context).
 
 ```bash
-uv run python -m models.main
+uv run python -m models.tfidf_main
 ```
 
 ## GPT-5.4-nano zero-shot baseline

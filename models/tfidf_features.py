@@ -4,18 +4,7 @@ The dataset pairs a delta and a non-delta argument; `shuffle_pairs` assigns them
 to slots A/B with a 50/50 coin flip and sets label=1 when A is the delta. Naively
 concatenating tfidf(arg_a) and tfidf(arg_b) as separate feature blocks lets a
 model key on *which slot* a token lands in, learning a positional shortcut that
-has nothing to do with persuasiveness. The fine-tuned Qwen ranker avoids this by
-construction (it scores each argument independently — see `models.qwen`); these
-baselines should be held to the same bar so the comparison is apples-to-apples.
-
-Design:
-  - Context (topic, original_post) is symmetric under an A<->B swap, so it is
-    vectorized as-is and gives the model the question context.
-  - The two arguments share ONE vectorizer (fit on arg_a and arg_b together), and
-    we feed the DIFFERENCE tfidf(arg_a) - tfidf(arg_b). Swapping A<->B negates
-    this block and leaves context untouched, so the representation carries no
-    "slot A is usually the delta" signal — only the contrast between the two
-    arguments, which is what the label actually depends on.
+has nothing to do with persuasiveness.
 """
 
 from __future__ import annotations
@@ -24,7 +13,6 @@ from scipy.sparse import csr_matrix, hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 _CONTEXT_FIELDS = ["topic", "original_post"]
-_ARG_FIELDS = ["arg_a", "arg_b"]
 
 
 class PairTfidf:
@@ -43,6 +31,7 @@ class PairTfidf:
         self._max_features = max_features
 
     def fit(self, train_fields: dict) -> "PairTfidf":
+        """Fit one vectorizer per context field and a shared one over both arguments."""
         for field in _CONTEXT_FIELDS:
             vec = TfidfVectorizer(
                 max_features=self._max_features, sublinear_tf=True, ngram_range=(1, 2)
@@ -57,6 +46,7 @@ class PairTfidf:
         return self
 
     def transform(self, fields: dict) -> csr_matrix:
+        """Stack context features with the antisymmetric arg_a-arg_b tfidf difference."""
         context = [self._context_vecs[f].transform(fields[f]) for f in _CONTEXT_FIELDS]
         arg_a = self._arg_vec.transform(fields["arg_a"])
         arg_b = self._arg_vec.transform(fields["arg_b"])
