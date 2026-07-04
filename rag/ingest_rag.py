@@ -7,13 +7,13 @@ Reads data/cmv_israel_rag_pro.parquet and adds one document per argument to the
 queries, so no graph changes are needed.
 
 Each document's page_content is the argument text alone — so the embedding
-matches on the argument, not on the (long) post. Topic and the original post
+matches on the argument, not on the post. Topic and the original post
 are kept in metadata; retrieve_local reassembles the full context block for
 the generator.
 
 Usage:
-    python -m rag.ingest_rag
-    python -m rag.ingest_rag --reset   # drop existing collection first
+    uv run python -m rag.ingest_rag
+    uv run python -m rag.ingest_rag --reset   # drop existing collection first
 """
 
 import argparse
@@ -21,8 +21,11 @@ from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
 
-from agents.retrieval import CHROMA_DIR, COLLECTION_NAME, _doc_count
+from agents.retrieval import CHROMA_DIR, COLLECTION_NAME, doc_count
 
 INPUT_PARQUET = Path("data/cmv_israel_rag_pro.parquet")
 POST_EXCERPT_CHARS = 1200
@@ -30,6 +33,7 @@ ARGUMENT_MAX_CHARS = 6000
 
 
 def main(reset: bool = False) -> None:
+    """Embed the pro-Israel arguments and upsert them into the Chroma collection."""
     load_dotenv()
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.classify_stance first.")
@@ -40,10 +44,6 @@ def main(reset: bool = False) -> None:
         print("Nothing to ingest.")
         return
 
-    from langchain_chroma import Chroma
-    from langchain_core.documents import Document
-    from langchain_openai import OpenAIEmbeddings
-
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     store = Chroma(
         collection_name=COLLECTION_NAME,
@@ -52,7 +52,7 @@ def main(reset: bool = False) -> None:
     )
 
     if reset:
-        existing = _doc_count(store)
+        existing = doc_count(store)
         if existing:
             store.delete_collection()
             print(f"Reset: dropped {existing} existing documents from '{COLLECTION_NAME}'.")
@@ -86,11 +86,16 @@ def main(reset: bool = False) -> None:
     # idempotent: same comment_id -> same id, so re-running upserts rather than duplicates
     store.add_documents(docs, ids=ids)
     print(f"Ingested {len(docs)} documents into '{COLLECTION_NAME}' at {CHROMA_DIR}.")
-    print(f"Collection now holds {_doc_count(store)} documents.")
+    print(f"Collection now holds {doc_count(store)} documents.")
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Parse CLI args and run the ingest."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset", action="store_true", help="Drop the collection before ingesting")
     args = parser.parse_args()
     main(reset=args.reset)
+
+
+if __name__ == "__main__":
+    cli()

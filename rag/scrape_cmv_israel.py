@@ -9,8 +9,8 @@ Output (local; the downstream rag.classify_stance step reads the parquet):
     data/cmv_israel_rag.parquet  /  .jsonl
 
 Usage:
-    python -m rag.scrape_cmv_israel             # scrape -> parquet + jsonl
-    python -m rag.scrape_cmv_israel --smoke     # 5 threads, dump raw JSON
+    uv run python -m rag.scrape_cmv_israel             # scrape -> parquet + jsonl
+    uv run python -m rag.scrape_cmv_israel --smoke     # 5 threads, dump raw JSON
 """
 
 import argparse
@@ -49,6 +49,7 @@ SMOKE_DUMP = OUT_DIR / "cmv_israel_smoke.json"
 
 
 def _get(path: str, params: dict) -> dict:
+    """GET an arctic-shift endpoint, retrying on 429s and transient errors."""
     for attempt in range(5):
         try:
             r = requests.get(f"{ARCTIC_BASE}{path}", params=params, timeout=REQUEST_TIMEOUT)
@@ -68,7 +69,7 @@ def fetch_submissions(max_matched: int | None = None) -> list[dict]:
     """Page through the date window, keeping title-matched submissions.
 
     `max_matched` stops early once that many matches are collected (used by the
-    smoke test); None pages through the whole window.
+    smoke test).
     """
     matched: list[dict] = []
     after = int(START_DATE.timestamp())
@@ -131,10 +132,12 @@ def fetch_comments(submission_id: str) -> list[dict]:
 
 
 def _valid_body(body: str | None) -> bool:
+    """True if the comment body has real text (not empty/deleted/removed)."""
     return bool(body) and body not in ("[deleted]", "[removed]")
 
 
 def _is_delta_confirmation(comment: dict) -> bool:
+    """True if this is DeltaBot's 'Confirmed: ... delta awarded' message."""
     if comment.get("author") != "DeltaBot":
         return False
     body = (comment.get("body") or "").lower()
@@ -157,6 +160,7 @@ def _has_delta(comment: dict) -> bool:
 
 
 def _is_top_level(comment: dict, submission_id: str) -> bool:
+    """True if the comment replies directly to the submission (not another comment)."""
     return (comment.get("parent_id") or "") == f"t3_{submission_id}"
 
 
@@ -214,6 +218,7 @@ def smoke_test(n: int = 5) -> None:
 
 
 def main() -> None:
+    """Scrape all matched threads and save the RagArgument records to parquet + jsonl."""
     OUT_DIR.mkdir(exist_ok=True)
     print(f"Fetching CMV submissions {START_DATE.date()} -> {END_DATE.date()}")
     submissions = fetch_submissions()
@@ -240,7 +245,8 @@ def main() -> None:
     print(f"\nSaved {len(df)} RAG records to {OUT_RAG_PARQUET} and {OUT_RAG_JSONL}.")
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Parse CLI args and dispatch to the full scrape or the smoke test."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true", help="Fetch 5 threads, dump raw JSON")
     args = parser.parse_args()
@@ -248,3 +254,7 @@ if __name__ == "__main__":
         smoke_test()
     else:
         main()
+
+
+if __name__ == "__main__":
+    cli()

@@ -17,8 +17,8 @@ Each row gets:
     rationale    one-sentence explanation from the classifier
 
 Usage:
-    python -m rag.classify_stance
-    python -m rag.classify_stance --no-hub
+    uv run python -m rag.classify_stance
+    uv run python -m rag.classify_stance --no-hub
 """
 
 import argparse
@@ -75,6 +75,7 @@ OUT_FEATURES = Features({
 
 
 def _classify_one(client: OpenAI, topic: str, argument: str) -> dict:
+    """Zero-shot classify one argument's stance; retries, returns neutral on failure."""
     user = (
         f"### Thread topic\n{topic}\n\n"
         f"### Argument\n{argument[:ARG_TRUNC_CHARS]}\n\n"
@@ -109,6 +110,7 @@ def _classify_one(client: OpenAI, topic: str, argument: str) -> dict:
 
 
 def classify(df: pd.DataFrame) -> pd.DataFrame:
+    """Classify every row, adding stance / confidence / rationale columns."""
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     results = []
     for i, row in enumerate(df.itertuples(index=False), 1):
@@ -123,6 +125,7 @@ def classify(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def push_to_hub(df: pd.DataFrame) -> None:
+    """Upload the classified rows to the Hub split (no-op if HF_TOKEN is unset)."""
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
         print("HF_TOKEN not set; skipping Hub upload.")
@@ -135,6 +138,7 @@ def push_to_hub(df: pd.DataFrame) -> None:
 
 
 def main(push: bool = True) -> None:
+    """Load the scraped parquet, classify, save all + pro-Israel subsets, push."""
     load_dotenv()
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.scrape_cmv_israel first.")
@@ -157,8 +161,13 @@ def main(push: bool = True) -> None:
         push_to_hub(pro_df)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Parse CLI args and run the classification pipeline."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-hub", action="store_true", help="Skip pushing to Hugging Face Hub")
     args = parser.parse_args()
     main(push=not args.no_hub)
+
+
+if __name__ == "__main__":
+    cli()

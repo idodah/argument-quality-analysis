@@ -1,10 +1,8 @@
 """Small retrieval-quality check for the local Chroma corpus.
 
-Measures whether the semantic retriever surfaces the *right* documents, so you
-can tell — with numbers rather than vibes — whether the current dense-only
-setup is good enough, and notice if quality regresses as the corpus grows (the
-point at which adding chunking or hybrid search would start to pay off; see the
-discussion in the module docstrings of `rag/ingest_rag.py`).
+Measures whether the semantic retriever surfaces the *right* documents, so we
+can tell whether the current dense-only setup is good enough, and notice if
+quality regresses as the corpus grows.
 
 Leave-one-out self-retrieval over the CMV arguments, no hand-labeling required.
 For each argument we query with the same `topic` + `original_post` string the
@@ -13,9 +11,6 @@ whether that argument's own document comes back in the top-k. Reports Recall@k
 and MRR. This is the metric that matters: the graph retrieves arguments that
 countered a *similar* opposing post, and a document is the most relevant answer
 to its own post.
-
-Needs the real corpus and OPENAI_API_KEY (it embeds queries), so it lives in
-`rag/` as a script, not in the offline `tests/` suite.
 
 Usage:
     uv run python -m rag.eval_retrieval
@@ -69,6 +64,7 @@ def _self_retrieval(df: pd.DataFrame, retriever: LocalRetriever, k: int) -> None
 
 
 def main(k: int = 4) -> None:
+    """Load the corpus and run the self-retrieval evaluation at top-k."""
     load_dotenv()
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(
@@ -87,8 +83,13 @@ def main(k: int = 4) -> None:
     _self_retrieval(df, retriever, k)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Parse CLI args and run the retrieval evaluation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--k", type=int, default=4, help="top-k to retrieve (default 4)")
     args = parser.parse_args()
     main(k=args.k)
+
+
+if __name__ == "__main__":
+    cli()
