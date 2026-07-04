@@ -1,19 +1,26 @@
 name: terraform
 
-# Plan on PRs that touch infra/terraform/, apply on merge to main.
-# Auth is via GitHub OIDC -> the cmv-harvester-ci role (no static AWS keys).
+# Plan/apply the infra stack. Auth is via GitHub OIDC -> the cmv-harvester-ci
+# role (no static AWS keys).
+#
+# Manual (workflow_dispatch) only: the stack (incl. the Terraform state backend)
+# is normally torn down to avoid cost, so automatic push/PR triggers would just
+# fail at `init` against a missing backend. Run this by hand when you actually
+# provision or update AWS. Choose plan-only or apply via the `action` input.
 
 on:
-  pull_request:
-    paths: ["infra/terraform/**"]
-  push:
-    branches: [main]
-    paths: ["infra/terraform/**"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan (dry-run) or apply (provision/update the stack)."
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
 
 permissions:
   id-token: write   # required to request the OIDC token
   contents: read
-  pull-requests: write  # to post the plan summary on the PR
 
 concurrency:
   group: terraform-${{ github.ref }}
@@ -69,5 +76,5 @@ jobs:
             -out=tfplan
 
       - name: Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event.inputs.action == 'apply'
         run: terraform apply -no-color -input=false -auto-approve tfplan

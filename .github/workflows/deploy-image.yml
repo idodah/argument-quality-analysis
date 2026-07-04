@@ -1,9 +1,12 @@
 name: deploy-image
 
-# Build the harvester runtime image and push it to ECR on merges to main that
-# touch the app code or the Dockerfile, OR on manual dispatch (build from any
-# branch, e.g. before merging). Tags with the commit SHA (immutable, what the
-# task definition pins) and `latest`. OIDC auth, no static keys.
+# Build the harvester runtime image and push it to ECR. Tags with the commit SHA
+# (immutable, what the task definition pins) and `latest`. OIDC auth, no static
+# keys.
+#
+# Manual (workflow_dispatch) only: the AWS stack is normally torn down to avoid
+# cost, so an automatic push trigger would just fail against a cold account.
+# Run this by hand after you've re-provisioned AWS (see infra/DEPLOY.md).
 
 on:
   workflow_dispatch:
@@ -12,16 +15,6 @@ on:
         description: "Extra image tag to push (in addition to the commit sha and latest)."
         required: false
         default: "bootstrap"
-  push:
-    branches: [main]
-    paths:
-      - "agents/**"
-      - "harvester/**"
-      - ".chroma/**"
-      - "Dockerfile"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/deploy-image.yml"
 
 permissions:
   id-token: write
