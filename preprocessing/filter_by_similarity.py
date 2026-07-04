@@ -1,18 +1,16 @@
 """
-Filter the raw dataset by semantic similarity (no summary step required).
+Filter the raw dataset by semantic similarity.
 
 Steps:
   1. Load the 'full' split from HF (output of preprocess.py).
-  2. Embed original_post / delta_argument / nodelta_argument once each
-     (deduplicated to save API calls).
+  2. Embed original_post / delta_argument / nodelta_argument once each.
   3. Compute three cosine-similarity columns:
        - sim_orig_delta      (post  <-> delta_argument)
        - sim_orig_nodelta    (post  <-> nodelta_argument)
        - sim_delta_nodelta   (delta <-> nodelta_argument)
-  4. Save the full df WITH similarity columns to Excel (local).
-  5. Apply thresholds: keep rows where both arguments are on-topic w.r.t. the
+  4. Apply thresholds: keep rows where both arguments are on-topic w.r.t. the
      post, and drop near-duplicate pairs.
-  6. Push filtered df WITHOUT similarity columns to HF as split='filtered'.
+  5. Push filtered df WITHOUT similarity columns to HF as split='filtered'.
 """
 
 import os
@@ -45,7 +43,6 @@ _OPENAI_BATCH_SIZE = 512
 
 def embed_texts(texts: list[str]) -> np.ndarray:
     """Embed a list of texts in batches using OpenAI text-embedding-3-small.
-
     Returns an (N, D) float32 array in the same order as input texts.
     """
     client = OpenAI()
@@ -66,6 +63,7 @@ def cosine_sim_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def _embed_unique(texts: pd.Series) -> dict[str, np.ndarray]:
+    """Embed each distinct non-empty text once; return a {text: embedding} cache."""
     unique = [t for t in texts.dropna().unique().tolist() if t]
     print(f"  embedding {len(unique)} unique texts...")
     embs = embed_texts(unique)
@@ -73,12 +71,50 @@ def _embed_unique(texts: pd.Series) -> dict[str, np.ndarray]:
 
 
 def _series_to_matrix(series: pd.Series, cache: dict[str, np.ndarray]) -> np.ndarray:
+    """Stack each row's cached embedding into an (N, D) matrix aligned with `series`."""
     dim = next(iter(cache.values())).shape[0]
     out = np.zeros((len(series), dim), dtype=np.float32)
     for i, t in enumerate(series.tolist()):
         if t in cache:
             out[i] = cache[t]
     return out
+
+
+def add_similarity_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the three cosine-similarity columns (post↔delta, post↔nodelta,
+    delta↔nodelta), embedding each distinct text once."""
+    print("\nEmbedding original_post...")
+    cache_orig = _embed_unique(df["original_post"])
+    print("Embedding delta_argument...")
+    cache_delta = _embed_unique(df["delta_argument"])
+    print("Embedding nodelta_argument...")
+    cache_nodelta = _embed_unique(df["nodelta_argument"])
+
+    emb_orig = _series_to_matrix(df["original_post"], cache_orig)
+    emb_delta = _series_to_matrix(df["delta_argument"], cache_delta)
+    emb_nodelta = _series_to_matrix(df["nodelta_argument"], cache_nodelta)
+
+    df["sim_orig_delta"] = cosine_sim_matrix(emb_orig, emb_delta)
+    df["sim_orig_nodelta"] = cosine_sim_matrix(emb_orig, emb_nodelta)
+    df["sim_delta_nodelta"] = cosine_sim_matrix(emb_delta, emb_nodelta)
+    return df
+
+
+def apply_similarity_filters(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep rows where both arguments are on-topic w.r.t. the post and the two
+    arguments aren't near-duplicates, then drop the similarity columns."""
+    mask = pd.Series(True, index=df.index)
+    for col, thr in SIM_THRESHOLDS.items():
+        col_mask = df[col] >= thr
+        print(f"  {col} >= {thr}: keeps {col_mask.sum()}/{len(df)}")
+        mask &= col_mask
+
+    dup_mask = df["sim_delta_nodelta"] <= MAX_DELTA_NODELTA_SIM
+    print(f"  sim_delta_nodelta <= {MAX_DELTA_NODELTA_SIM}: keeps {dup_mask.sum()}/{len(df)}")
+    mask &= dup_mask
+
+    sim_cols = list(SIM_THRESHOLDS.keys()) + ["sim_delta_nodelta"]
+    return df[mask].drop(columns=sim_cols).reset_index(drop=True)
 
 
 def main() -> None:
@@ -97,41 +133,15 @@ def main() -> None:
     if len(df) < before:
         print(f"  dropped {before - len(df)} rows with nulls in required text columns")
 
-    print("\nEmbedding original_post...")
-    cache_orig = _embed_unique(df["original_post"])
-    print("Embedding delta_argument...")
-    cache_delta = _embed_unique(df["delta_argument"])
-    print("Embedding nodelta_argument...")
-    cache_nodelta = _embed_unique(df["nodelta_argument"])
-
-    emb_orig = _series_to_matrix(df["original_post"], cache_orig)
-    emb_delta = _series_to_matrix(df["delta_argument"], cache_delta)
-    emb_nodelta = _series_to_matrix(df["nodelta_argument"], cache_nodelta)
-
-    df["sim_orig_delta"] = cosine_sim_matrix(emb_orig, emb_delta)
-    df["sim_orig_nodelta"] = cosine_sim_matrix(emb_orig, emb_nodelta)
-    df["sim_delta_nodelta"] = cosine_sim_matrix(emb_delta, emb_nodelta)
+    df = add_similarity_columns(df)
 
     print("\nSimilarity distributions:")
     print(df[list(SIM_THRESHOLDS.keys()) + ["sim_delta_nodelta"]].describe().to_string())
-
     print(f"\nSaving full df with similarities to {EXCEL_OUT}...")
     df.to_excel(EXCEL_OUT, index=False)
 
-    mask = pd.Series(True, index=df.index)
-    for col, thr in SIM_THRESHOLDS.items():
-        col_mask = df[col] >= thr
-        print(f"  {col} >= {thr}: keeps {col_mask.sum()}/{len(df)}")
-        mask &= col_mask
-
-    dup_mask = df["sim_delta_nodelta"] <= MAX_DELTA_NODELTA_SIM
-    print(f"  sim_delta_nodelta <= {MAX_DELTA_NODELTA_SIM}: keeps {dup_mask.sum()}/{len(df)}")
-    mask &= dup_mask
-
-    sim_cols = list(SIM_THRESHOLDS.keys()) + ["sim_delta_nodelta"]
-    filtered = df[mask].drop(columns=sim_cols).reset_index(drop=True)
+    filtered = apply_similarity_filters(df)
     print(f"\nFiltered: {len(filtered)}/{len(df)} rows survived all thresholds")
-
     print(f"Saving filtered df to {EXCEL_FILTERED_OUT}...")
     filtered.to_excel(EXCEL_FILTERED_OUT, index=False)
 
