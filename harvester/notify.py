@@ -2,8 +2,7 @@
 
 Set `NTFY_TOPIC` in `.env` and subscribe to it in the ntfy app / web — no bot,
 no chat IDs. Optionally `NTFY_SERVER` (default https://ntfy.sh) and `NTFY_TOKEN`
-(Bearer auth for protected topics). Note: ntfy.sh is a public relay; pick an
-unguessable topic.
+(Bearer auth for protected topics). Note: ntfy.sh is a public relay.
 """
 
 from __future__ import annotations
@@ -27,11 +26,8 @@ def _chunks(text: str, size: int = _MAX):
 
 def send(text: str, click_url: str | None = None) -> None:
     """Push `text` to the configured ntfy topic, chunked under the size limit.
-
-    If `click_url` is given, the notification is made tappable (ntfy `Click`
-    header) and gets an "Open post" action button (ntfy `Actions` header), both
-    pointing at the original source post so the operator can jump straight to it.
-    """
+    If `click_url` is given, the notification becomes tappable and gains an
+    "Open post" button pointing at the source post."""
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         raise RuntimeError(
@@ -62,10 +58,9 @@ def send(text: str, click_url: str | None = None) -> None:
 
 def format_result(title: str, url: str, post_body: str, argument: str,
                   grounded: bool, pro_israel: bool, sources: list[str] | None = None) -> str:
-    """Build the per-post message: original post + clean argument + sources.
-
-    The argument itself carries no citations; the sources are listed in a
-    separate trailing section for human-in-the-loop verification."""
+    """Build the per-post message: original post + argument + a trailing sources
+    list (the argument carries no inline citations; sources are separated out for
+    human review)."""
     flags = []
     if not grounded:
         flags.append("NOT grounded")

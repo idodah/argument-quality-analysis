@@ -1,7 +1,7 @@
 """Two-stage filter: cheap keyword prefilter, then an LLM stance classifier.
 
 Only posts that (a) mention Israel/Palestine keywords AND (b) are confirmed by
-the LLM to argue AGAINST Israel proceed to the (expensive) graph. The classifier
+the LLM to argue AGAINST Israel proceed to the graph. The classifier
 prompt lives here so the harvester stays self-contained; it reuses only the
 shared LLM wrapper from agents.llm.
 """
@@ -37,15 +37,13 @@ _INJECTION_MARKERS = re.compile(
 
 
 def _neutralize(text: str) -> str:
-    """Defang untrusted text before putting it in a prompt: strip any sequence
-    that imitates our fence delimiters so a post can't 'close' its own block and
-    smuggle in instructions. Does not try to interpret intent — that's the
-    classifier's job; this only protects the prompt structure."""
+    """Strip any sequence that imitates our fence delimiters, so an untrusted
+    post can't 'close' its own block and smuggle in instructions."""
     return _INJECTION_MARKERS.sub("[removed]", text or "")
 
 
 CLASSIFY_SYSTEM = (
-    "You screen r/ChangeMyView posts for an argument pipeline. Decide whether a "
+    "You screen social media posts for an argument pipeline. Decide whether a "
     "post is BOTH about Israel/Palestine AND argues AGAINST Israel (critical of "
     "Israel's actions, policies, or legitimacy). A post that is pro-Israel, "
     "neutral, or not about Israel/Palestine at all does NOT qualify.\n\n"
@@ -72,6 +70,8 @@ def keyword_match(title: str, body: str) -> bool:
 
 
 def _parse_verdict(text: str) -> dict:
+    """Extract {anti_israel, reason} from the LLM's JSON reply; on any parse
+    failure default to anti_israel=False so we never draft on an unconfirmed post."""
     match = _JSON_OBJ_RE.search(text)
     if not match:
         return {"anti_israel": False, "reason": "parse_error"}
@@ -86,9 +86,8 @@ def _parse_verdict(text: str) -> dict:
 
 
 def classify_anti_israel(title: str, body: str) -> dict:
-    """One LLM call: is this post arguing against Israel? Returns
-    {'anti_israel': bool, 'reason': str}. Defaults to False on parse failure so
-    we never run the expensive graph on an unconfirmed post."""
+    """One LLM call deciding whether the post argues against Israel. Returns
+    {'anti_israel': bool, 'reason': str}."""
     llm = deterministic_llm()
     user = CLASSIFY_USER.format(
         title=_neutralize(title), body=_neutralize(body[:6000])

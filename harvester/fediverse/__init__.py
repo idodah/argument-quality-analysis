@@ -2,7 +2,7 @@
 
 Each adapter implements `Platform` (base.py), turning its backend into uniform
 `PostRef` / `Thread` shapes. `get_platform(name)` is the registry the MCP server
-and orchestrator use. See harvester/FEDIVERSE_DESIGN.md.
+and orchestrator use.
 """
 
 from __future__ import annotations
@@ -11,8 +11,7 @@ from harvester.fediverse.base import Platform, PostRef, Thread
 
 
 def get_platform(name: str) -> Platform:
-    """Return the adapter for a platform name. Adapters are imported lazily so a
-    missing optional dependency in one never breaks the others."""
+    """Return the adapter for a platform name."""
     n = name.lower()
     if n == "lemmy":
         from harvester.fediverse.lemmy import LemmyAdapter

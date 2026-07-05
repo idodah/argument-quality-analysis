@@ -23,6 +23,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from botocore.exceptions import ClientError
+
 # ---------------------------------------------------------------------------
 # Backend selection
 # ---------------------------------------------------------------------------
@@ -75,8 +77,7 @@ def _connect(path: Path | None = None) -> sqlite3.Connection:
 
 
 def _row_from_result(result: dict) -> dict:
-    """Normalize a `generate_pro_israel_response` result (augmented with
-    id/title/url/original_post) into the column/attribute set both backends store."""
+    """Normalize a generation result into the column set both backends store."""
     title = result.get("title") or ""
     return {
         "id": str(result.get("id") or ""),
@@ -147,9 +148,8 @@ _DDB_TABLES: dict = {}
 
 
 def _ddb_table(name_env: str):
-    """Return a cached DynamoDB Table handle for the table named by `name_env`.
-    Cached because boto3 resource/client construction parses the service model —
-    too costly to redo on every mark_seen / record call within a run."""
+    """Cached DynamoDB Table handle for the table named by env var `name_env`
+    (cached because boto3 client construction is too costly to repeat per call)."""
     table_name = os.environ[name_env]
     if table_name not in _DDB_TABLES:
         import boto3
@@ -160,8 +160,6 @@ def _ddb_table(name_env: str):
 
 
 def _ddb_record(result: dict) -> bool:
-    from botocore.exceptions import ClientError
-
     r = _row_from_result(result)
     # Store sources as a JSON string for parity with SQLite; booleans map to DDB
     # BOOL, created_at to a Number.
@@ -186,10 +184,9 @@ def _ddb_record(result: dict) -> bool:
 
 
 def _ddb_mark_seen(post_id: str) -> bool:
-    """Atomic claim: conditional PutItem fails if the id already exists, so
-    exactly one concurrent caller gets True — the DynamoDB analogue of the
-    SQLite PRIMARY KEY race guarantee."""
-    from botocore.exceptions import ClientError
+    """Atomic claim via conditional PutItem (fails if the id exists), so exactly
+    one concurrent caller gets True — the DynamoDB analogue of the SQLite
+    PRIMARY KEY guarantee."""
 
     try:
         _ddb_table("DDB_SEEN_TABLE").put_item(
@@ -213,25 +210,19 @@ def _ddb_is_seen(post_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def record(result: dict, db_path: Path | None = None) -> bool:
-    """Insert one generated result. Returns True if inserted, False if the id was
-    already present (idempotent — safe to call on re-delivered posts).
-
-    `result` is the dict from `generate_pro_israel_response`, augmented with
-    `id`/`title`/`url`/`original_post`. The CMV topic is the post title.
-    """
+    """Insert one generated result (the generation dict augmented with
+    id/title/url/original_post). Returns True if inserted, False if the id was
+    already present — idempotent, so safe on re-delivered posts."""
     if _use_dynamo():
         return _ddb_record(result)
     return _sqlite_record(result, db_path)
 
 
 def mark_seen(post_id: str, db_path: Path | None = None) -> bool:
-    """Atomically claim a post id in the `seen` ledger.
-
-    Returns True if this is the FIRST time we've seen this id (claim succeeded —
-    the caller should process it), or False if it was already seen (skip it).
-    Race-free on both backends (SQLite PRIMARY KEY / DynamoDB conditional put), so
-    a post is never processed twice even with overlapping/concurrent polls.
-    """
+    """Atomically claim a post id in the `seen` ledger. Returns True on first
+    sight (caller should process it), False if already seen (skip it). Race-free
+    on both backends, so a post is never processed twice even under concurrent
+    polls."""
     if not post_id:
         return False
     if _use_dynamo():

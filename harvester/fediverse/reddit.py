@@ -37,6 +37,8 @@ class RedditAdapter:
         self._cache: dict[str, PostRef] = {}
 
     def search(self, query: str, limit: int = 25) -> list[PostRef]:
+        """Fetch the newest CMV posts and keep those matching any query term
+        (Reddit has no unauthenticated search, so we filter the feed locally)."""
         terms = [t.lower() for t in query.split() if t.strip()]
         out: list[PostRef] = []
         for post in fetch_from_rss(limit=max(limit, 25)):
@@ -50,12 +52,10 @@ class RedditAdapter:
         return out
 
     def thread(self, local_id: str) -> Thread:
-        # RSS already carried the full post body; comments aren't in the feed, so
-        # there is nothing to fetch here — `search()` populated `_cache` with the
-        # full PostRef. The orchestrator always calls search() before thread()
-        # within a cycle, so a miss means the id was never in this run's feed;
-        # re-fetching wouldn't surface it (the /new feed only carries the newest
-        # ~25), so raise rather than burn a second round-trip on a stale guess.
+        """Return the cached post as a Thread (RSS carried the full body and no
+        comments, so search() already stashed everything). A miss means the id
+        isn't in this run's feed — which the /new feed can't surface — so raise
+        rather than waste a round-trip."""
         ref = self._cache.get(local_id)
         if ref is None:
             raise RuntimeError(

@@ -14,7 +14,7 @@ Layout (see the project README for the full map):
 
   Pipeline (per post)
     classify.py  - keyword prefilter + LLM anti-Israel stance classifier
-    (generation itself is agents.generate, imported directly by orchestrate.py)
+    core.py      - re-exports the generation entrypoint from agents.generate
 
   Post-generation (notify + persist)
     notify.py    - send one ntfy push (the only outbound write)

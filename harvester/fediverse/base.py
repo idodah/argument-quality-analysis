@@ -3,8 +3,6 @@
 One uniform contract over heterogeneous backends (Lemmy, PieFed, Reddit). Each
 adapter turns its platform's API into the same `PostRef` / `Thread` shapes, so the
 MCP tools and the orchestrator agent never touch platform-specific details.
-
-See harvester/FEDIVERSE_DESIGN.md for the rationale.
 """
 
 from __future__ import annotations
@@ -16,19 +14,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Protocol
 from urllib.parse import urlparse
 
+import requests
+
 
 def assert_safe_url(url: str) -> None:
-    """SSRF guard: reject non-http(s) schemes and URLs whose host resolves to a
-    private / loopback / link-local / reserved address.
-
-    The link-local block (169.254.0.0/16) is what stops a malicious instance or
-    post-derived URL from reaching the cloud metadata service (169.254.169.254)
-    and stealing the job's IAM credentials once this runs on AWS.
-
-    Defense-in-depth: today the instance hosts come from env vars (trusted), but
-    any future path that fetches a URL taken from post content (an `ap_id`, a
-    `url` field) is covered by this central check. Raises RuntimeError if unsafe.
-    """
+    """SSRF guard: reject non-http(s) schemes, or hosts that resolve to a
+    private/loopback/link-local/reserved address. The link-local block is what
+    keeps a malicious URL from reaching the AWS metadata service (169.254.169.254)
+    and stealing the job's IAM credentials."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise RuntimeError(f"refusing non-http(s) URL: {url!r}")
@@ -51,13 +44,9 @@ def assert_safe_url(url: str) -> None:
 
 def http_get_json(url: str, params: dict, headers: dict, *, timeout: int = 20,
                   retries: int = 2) -> dict:
-    """GET JSON with a small retry on transient errors. Fediverse instances are
-    small and throw intermittent 5xx / timeouts; one blip shouldn't lose a whole
-    platform's batch. Raises RuntimeError after the last attempt.
-
-    The URL is SSRF-checked (assert_safe_url) before the request."""
-    import requests
-
+    """GET JSON, retrying transient 5xx/timeouts (small Fediverse instances blip
+    often; one shouldn't lose a platform's batch). Raises RuntimeError if all
+    attempts fail."""
     assert_safe_url(url)
     last: Exception | None = None
     for attempt in range(retries + 1):
@@ -107,9 +96,9 @@ class Thread:
         return {"post": self.post.to_dict(), "comments": self.comments}
 
     def rebuttal_inputs(self) -> tuple[str, str]:
-        """(topic, body) for the generation graph: the title is the topic; the
-        body is the post body plus salient comments so there's something to
-        argue against even when the post is a bare link."""
+        """(topic, body) for the generation graph: title is the topic; body is
+        the post body plus top comments, so a bare-link post still has an
+        argument to rebut."""
         topic = self.post.title
         parts = []
         if self.post.body.strip():

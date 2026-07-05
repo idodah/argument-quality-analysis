@@ -20,6 +20,7 @@ def _instance() -> str:
 
 
 def _ts(published: str | None) -> float:
+    """Parse a PieFed ISO timestamp to epoch seconds; 0.0 if missing/unparseable."""
     if not published:
         return 0.0
     try:
@@ -29,6 +30,7 @@ def _ts(published: str | None) -> float:
 
 
 def _to_ref(p: dict, name: str) -> PostRef:
+    """Map a PieFed post dict to a PostRef (PieFed uses `title`, not `name`)."""
     return PostRef(
         canonical_id=p.get("ap_id") or f"piefed:{p.get('id')}",
         platform=name,
@@ -51,12 +53,14 @@ class PieFedAdapter:
         return http_get_json(f"{self.base}/api/alpha/{path}", params, self.headers)
 
     def search(self, query: str, limit: int = 25) -> list[PostRef]:
+        """Newest posts matching `query`."""
         data = self._get("search", {
             "q": query, "type_": "Posts", "sort": "New", "limit": limit,
         })
         return [_to_ref(pv.get("post", {}), self.name) for pv in data.get("posts", [])]
 
     def thread(self, local_id: str) -> Thread:
+        """Fetch the post plus its top comments by PieFed post id."""
         pdata = self._get("post", {"id": local_id})
         p = pdata.get("post_view", {}).get("post", {})
         post = _to_ref(p or {"id": local_id}, self.name)

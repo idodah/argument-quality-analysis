@@ -1,8 +1,7 @@
 """MCP server exposing multi-platform post reading as agent tools (read-only).
 
-This is the justified MCP placement (see harvester/FEDIVERSE_DESIGN.md): an
-orchestrator agent decides — across Lemmy, PieFed, and Reddit — which anti-Israel
-threads are worth answering and where, then drafts replies. That runtime decision
+An orchestrator agent decides — across Lemmy, PieFed, and Reddit — which anti-Israel 
+threads are worth answering and where, then drafts replies. That runtime decision 
 over heterogeneous-but-uniform backends is a real agent/tool boundary, which is
 what MCP is for. The tools are READ-ONLY: detect + draft + notify; never post.
 
@@ -34,16 +33,9 @@ def list_platforms() -> list[str]:
 
 @mcp.tool()
 def search_posts(platform: str, query: str, limit: int = 25) -> list[dict]:
-    """Search one platform for recent posts matching `query`.
-
-    Args:
-        platform: 'lemmy', 'piefed', or 'reddit'.
-        query: search terms (e.g. 'israel palestine gaza').
-        limit: max posts to return.
-
-    Returns a list of post refs, each with: canonical_id (the cross-platform
-    dedup key), platform, local_id (pass to get_thread), title, body, url,
-    created_utc. Returns an error dict on failure instead of raising.
+    """Search one platform ('lemmy'|'piefed'|'reddit') for recent posts matching
+    `query`, up to `limit`. Returns post refs (canonical_id, platform, local_id
+    for get_thread, title, body, url, created_utc), or an error dict on failure.
     """
     try:
         return [p.to_dict() for p in get_platform(platform).search(query, limit=limit)]
@@ -53,13 +45,9 @@ def search_posts(platform: str, query: str, limit: int = 25) -> list[dict]:
 
 @mcp.tool()
 def get_thread(platform: str, local_id: str) -> dict:
-    """Fetch one post plus its top comments (the material to rebut).
-
-    Args:
-        platform: 'lemmy', 'piefed', or 'reddit'.
-        local_id: the post's `local_id` from search_posts.
-
-    Returns {post: {...}, comments: [...]} — or {error: ...} on failure.
+    """Fetch one post plus its top comments (the material to rebut), by the
+    `local_id` from search_posts on platform ('lemmy'|'piefed'|'reddit').
+    Returns {post: {...}, comments: [...]}, or {error: ...} on failure.
     """
     try:
         return get_platform(platform).thread(local_id).to_dict()

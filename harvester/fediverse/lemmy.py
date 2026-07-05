@@ -19,6 +19,7 @@ def _instance() -> str:
 
 
 def _ts(published: str | None) -> float:
+    """Parse a Lemmy ISO timestamp to epoch seconds; 0.0 if missing/unparseable."""
     if not published:
         return 0.0
     try:
@@ -40,6 +41,7 @@ class LemmyAdapter:
         return http_get_json(f"{self.base}/api/v3/{path}", params, self.headers)
 
     def search(self, query: str, limit: int = 25) -> list[PostRef]:
+        """Newest posts matching `query`, federated across the network."""
         data = self._get("search", {
             "q": query, "type_": "Posts", "listing_type": "All",
             "sort": "New", "limit": limit,
@@ -59,7 +61,7 @@ class LemmyAdapter:
         return out
 
     def thread(self, local_id: str) -> Thread:
-        # Fetch the post itself, then its top comments.
+        """Fetch the post plus its top comments by Lemmy post id."""
         pdata = self._get("post", {"id": local_id})
         p = pdata.get("post_view", {}).get("post", {})
         post = PostRef(

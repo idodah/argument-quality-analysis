@@ -6,7 +6,7 @@ Each run:
   2. keeps only posts within the age window AND not already answered (the SQLite
      `seen` ledger, keyed on canonical_id — so a federated post on two instances,
      or one seen in a prior run, is never answered twice);
-  3. if nothing new is in window, does nothing (no spend);
+  3. if nothing new is in window, does nothing;
   4. otherwise sorts the candidates **Reddit-first, then newest**, and answers up
      to `--max-generations` of them (classify -> draft -> notify via ntfy).
 Read + draft + notify ONLY — never posts back.
@@ -14,16 +14,6 @@ Read + draft + notify ONLY — never posts back.
     uv run python -m harvester.orchestrate                  # defaults: 3 max, last 24h
     uv run python -m harvester.orchestrate --dry-run        # search + classify, no drafting
     uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
-
-`--dry-run` skips the expensive drafting graph (and notify/record), but still
-runs the cheap LLM stance *classifier* to report how many candidates would be
-answered. `--max-generations` bounds those classification calls too, so a dry-run
-costs at most that many classifier calls — it is not entirely free.
-
-One-shot — it runs once and exits; schedule it externally to run hourly:
-
-    # crontab -e  (set NTFY_TOPIC etc. in the repo's .env, which this loads)
-    0 * * * * cd /path/to/argument_quality2 && uv run python -m harvester.orchestrate >> harvester_orch.log 2>&1
 
 Per-run bounds (defaults): at most `--max-generations 3` answers, only posts from
 the last `--max-age-hours 24`. Dedup uses the SQLite `seen` ledger keyed on
@@ -49,6 +39,8 @@ from harvester import tracking
 from harvester.classify import _neutralize, classify_anti_israel, keyword_match
 from harvester.fediverse import PLATFORMS, get_platform
 
+from harvester.core import generate_pro_israel_response
+
 DEFAULT_QUERY = "israel palestine gaza zionism idf"
 
 # Prepended to the untrusted post body before it enters the generation graph, so
@@ -61,7 +53,8 @@ _UNTRUSTED_PREAMBLE = (
 
 
 def _handle(thread, *, dry_run: bool, do_notify: bool) -> str:
-    """Classify one thread; if anti-Israel, draft + route. Returns a status word."""
+    """Run one thread through the pipeline; if anti-Israel, draft + notify.
+    Returns a status word (empty / no_keyword / not_anti / anti_israel / generated)."""
     topic, body = thread.rebuttal_inputs()
     if not body.strip():
         return "empty"
@@ -72,10 +65,6 @@ def _handle(thread, *, dry_run: bool, do_notify: bool) -> str:
     if dry_run:
         return "anti_israel"  # would draft, but no spend in dry-run
 
-    from agents.generate import generate_pro_israel_response
-
-    # Defang the untrusted post before it reaches the generation graph: strip any
-    # delimiter-spoofing and prime the model that this is content, not commands.
     safe_topic = _neutralize(topic)
     safe_body = _UNTRUSTED_PREAMBLE + _neutralize(body)
     result = generate_pro_israel_response(safe_topic, safe_body)
@@ -83,8 +72,6 @@ def _handle(thread, *, dry_run: bool, do_notify: bool) -> str:
     result.update(id=post.canonical_id, title=post.title, url=post.url,
                   original_post=body, platform=post.platform)
 
-    # Flag any quality issue with a leading [!] so the operator notices it; the
-    # generated reply is still pushed for human review either way.
     flagged = (
         bool(result.get("gave_up"))
         or not bool(result.get("grounded", True))
@@ -119,6 +106,8 @@ def _sort_key(ref):
 def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
         max_generations: int | None = 3, max_age_hours: float = 24.0,
         dry_run: bool = False, do_notify: bool = True) -> dict:
+    """Search every platform, gather in-window unseen posts, then answer up to
+    `max_generations` of them (Reddit-first, newest-next). Returns run counts."""
     counts = {"found": 0, "seen": 0, "too_old": 0, "anti_israel": 0,
               "generated": 0, "errors": 0, "by_platform": {}}
 
@@ -135,11 +124,7 @@ def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
     # Only consider posts created within the last `max_age_hours`. 0/None disables.
     cutoff = (time.time() - max_age_hours * 3600) if max_age_hours else None
 
-    # --- Phase 1: gather eligible candidates across all platforms (no spend) ---
-    # Eligible = within the age window AND not already answered in a prior run.
-    # We only PEEK the ledger here (is_seen); the atomic claim happens in phase 2
-    # when we actually process a post, so candidates we never reach (cap) aren't
-    # wrongly marked seen.
+    # --- Phase 1: gather eligible candidates across all platforms ---
     candidates = []
     for name in platforms:
         pc = counts["by_platform"].setdefault(name, {"found": 0, "generated": 0})
@@ -160,7 +145,7 @@ def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
                 continue
             candidates.append(ref)
 
-    # If nothing new, do nothing (no thread fetches, no classify, no spend).
+    # If nothing new, do nothing (no thread fetches, no classify).
     if not candidates:
         print("[orchestrate] no new in-window posts; nothing to do.")
         _summary(counts)
@@ -180,7 +165,7 @@ def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
             break
 
         # Claim the id now (atomic). On a real run this also prevents a concurrent
-        # run from taking the same post; dry-runs only peeked above.
+        # run from taking the same post.
         if not dry_run and not tracking.mark_seen(ref.canonical_id):
             counts["seen"] += 1
             continue
@@ -207,6 +192,7 @@ def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
 
 
 def _summary(counts: dict) -> None:
+    """Print the one-line run tally (totals + per-platform found/generated)."""
     pp = " ".join(f"{k}={v['found']}/{v['generated']}" for k, v in counts["by_platform"].items())
     print(f"[orchestrate] done. found={counts['found']} too_old={counts['too_old']} "
           f"already_seen={counts['seen']} anti_israel={counts['anti_israel']} "

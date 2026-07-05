@@ -3,7 +3,7 @@
 `/r/changemyview/new/.rss` is served to unauthenticated clients (unlike the
 `.json` API and the data API, which are blocked / approval-gated), so it's the
 way to read the REAL r/changemyview from any machine with no credentials. It
-carries the newest ~25 posts; poll it on a schedule (see harvester/poll.py).
+carries the newest ~25 posts.
 
 `fetch_from_rss()` yields `Post`.
 """
@@ -18,7 +18,6 @@ from typing import Iterator
 SUBREDDIT = "changemyview"
 RSS_URL = f"https://www.reddit.com/r/{SUBREDDIT}/new/.rss"
 _ATOM = "{http://www.w3.org/2005/Atom}"
-# Reddit blocks empty/generic agents; a descriptive UA is also just polite.
 _DEFAULT_UA = "python:argument-quality-harvester:1.0 (CMV rss reader)"
 
 
@@ -34,7 +33,7 @@ class Post:
 class _HTMLToText(HTMLParser):
     """Minimal HTML -> plain text. Reddit's RSS `content` is rendered HTML; we
     only need readable text for the classifier and notifications, so we drop tags
-    and turn block elements into newlines. Stdlib only — no bs4/html2text dep."""
+    and turn block elements into newlines."""
 
     _BLOCKS = {"p", "div", "br", "li", "blockquote", "h1", "h2", "h3", "h4"}
 
@@ -54,7 +53,7 @@ class _HTMLToText(HTMLParser):
         self._parts.append(data)
 
     def text(self) -> str:
-        # Collapse runs of blank lines and trim.
+        """The accumulated plain text, with runs of blank lines collapsed."""
         raw = "".join(self._parts)
         lines = [ln.strip() for ln in raw.splitlines()]
         out: list[str] = []
@@ -71,8 +70,8 @@ def _html_to_text(html: str) -> str:
 
 
 def _post_id_from_link(link: str) -> str:
-    """Extract the reddit base36 post id from a permalink
-    (.../comments/<id>/slug/). Falls back to the whole link if not matched."""
+    """Extract the reddit `t3_<base36>` post id from a permalink
+    (.../comments/<id>/slug/); falls back to the whole link if unmatched."""
     parts = [p for p in (link or "").split("/") if p]
     if "comments" in parts:
         i = parts.index("comments")
@@ -82,12 +81,9 @@ def _post_id_from_link(link: str) -> str:
 
 
 def fetch_from_rss(limit: int = 25, url: str = RSS_URL) -> Iterator[Post]:
-    """Yield recent r/changemyview posts from the public Atom feed.
-
-    No credentials needed — Reddit serves `.rss` to unauthenticated clients. The
-    feed carries the newest ~25 posts; `limit` caps how many we yield. Skips
-    entries with an empty body (CMV requires one).
-    """
+    """Yield up to `limit` recent r/changemyview posts from the public Atom feed
+    (no credentials needed). Skips empty-body entries — removed or link-only
+    posts CMV wouldn't accept."""
     import xml.etree.ElementTree as ET
     from datetime import datetime
 
