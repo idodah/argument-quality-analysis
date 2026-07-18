@@ -73,7 +73,8 @@ HF_TOKEN=...                # optional, for dataset/model uploads
 RANKER_PATH=...             # Qwen ranker checkpoint, for the agentic graph
 ```
 
-The agent graph's LLM calls go through **Amazon Bedrock** (Nova 2 Lite by default);
+The agent graph's LLM calls go through **Amazon Bedrock** (Nova 2 Lite by
+default). Set `LLM_BACKEND=openai` to use OpenAI instead (no AWS needed).
 
 ### Observability (optional)
 
@@ -197,21 +198,21 @@ patterns** that the wiring implements.
 - **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
   `arg_b`) from the topic and original post.
 - **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
-  initial drafts and keeps the winner as the active side; only the survivor
-  iterates from here.
+  initial drafts and keeps the winner as `argument`; only that survivor
+  iterates from here (the loser is dropped).
 - **early_stance_check** — pre-refinement stance gate on the raw
   survivor. Catches only the off-topic / anti-Israel case and regenerates immediately; on-topic survivors fall through to the router.
-- **router** — Adaptive-RAG: picks `local`, `web`, or `none` (skip retrieval —
-  the current draft is strong enough to refine without new evidence) for the
-  active side this pass; when it picks `web`, the same call also plans the
-  search queries that target the critique's evidence gaps.
+- **router** — Adaptive-RAG: each pass picks `local`, `web`, or `none` (skip
+  retrieval — the current draft is strong enough to refine without new
+  evidence); when it picks `web`, the same call also plans the search queries
+  that target the critique's evidence gaps. The `none` route is not a node — it
+  edges straight to `reflect`, adding no new documents and preserving the
+  existing pool, so refinement still runs and can cite previously-grounded facts
+  without fetching fresh evidence.
 - **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
-- **skip_retrieval** — routes straight to `reflect`: adds no new documents and
-  preserves the existing pool, so refinement still runs (and can cite
-  previously-grounded facts) without fetching fresh evidence this pass.
 - **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
   subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
   and `web_search=True` routes to the web-search fallback first.
@@ -221,16 +222,16 @@ patterns** that the wiring implements.
 - **reflect** — generates a critique of the current draft grounded in the
   retrieved evidence, comparing it against the original post (what's missing /
   superfluous). Each critique is appended to `critique_history` (Reflexion).
-- **refine** — rewrites the active side's draft using the full critique history
+- **refine** — rewrites the current draft using the full critique history
   plus any **fix notes** (ungrounded-claim issues from `hallucination_check`
   and/or a stance reason from `stance_check`), attaching inline citations
   to evidence-backed claims.
 - **hallucination_check** — Self-RAG binary groundedness check.
-- **stance_check** — classifies the refined draft as
-  `pro_israel`, `neutral_needs_refine`
-  or `off_topic_or_anti` (→ generate_initial, regeneration loop). It records a
-  `regen_reason` the next pass must fix, and sets `gave_up=True` (→ finalize)
-  when both the refinement and regeneration budgets are exhausted.
+- **stance_check** — classifies the refined draft as `pro_israel` (→ finalize),
+  `neutral_needs_refine` (→ router, refinement loop), or `off_topic_or_anti`
+  (→ generate_initial, regeneration loop). It records a `regen_reason` the next
+  pass must fix, and sets `gave_up=True` (→ finalize) when both the refinement
+  and regeneration budgets are exhausted.
 - **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
   grounded / pro-Israel / gave-up warnings (and whether grounding was verified),
   and prints the run's trajectory.

@@ -1,29 +1,19 @@
 """Node: cheap pre-refinement stance gate on the raw survivor.
 
-Runs right after `eliminate_loser`, BEFORE any retrieval / reflect / refine.
-It classifies the surviving raw draft and short-circuits the one case where a
-full refinement pass would be pure waste: an off-topic or overtly anti-Israel
-survivor. Those can only be fixed by a fresh generation, so there is no point
-spending a router -> retrieve -> grade -> reflect -> refine -> ground cycle on
-them first.
+Runs right after `eliminate_loser`, before any retrieval/refine. It catches the
+one case a refinement pass can't rescue — an off-topic or anti-Israel draft —
+and regenerates immediately instead of burning a full refine cycle on it first.
 
-Routing (early_stance_router, via the stamped `early_action`):
-  - off_topic_or_anti AND regen budget left -> generate_initial (regeneration)
-  - off_topic_or_anti AND regen budget spent -> router (refine once; the late
-        stance_check then records gave_up and finalizes)
-  - everything else (pro_israel / neutral_needs_refine) -> router
+Routing (via the stamped `early_action`):
+  - off_topic_or_anti, regen budget left  -> generate_initial (regenerate)
+  - off_topic_or_anti, regen budget spent  -> router (refine once)
+  - anything else                          -> router
 
-The early gate NEVER routes to finalize and NEVER decides give-up. Give-up is
-owned solely by the late `stance_check`, which sees the draft after a refinement
-pass. The early gate only ever (a) regenerates while it has budget, or (b) hands
-the draft to the refinement path. This preserves two invariants:
-  - every shipped argument has passed through at least one refine -> grounding
-    pass (nothing ships straight from the raw survivor), and
-  - termination is bounded: once the regen budget is spent the early gate stops
-    short-circuiting, so the late gate is guaranteed to be reached.
-
-Counter semantics for the regeneration branch mirror `stance_check`: increment
-early_regen_iter and reset the per-generation counters (refine_iter, ground_retries).
+The early gate never ships and never decides give-up — that stays with the late
+`stance_check`, which always runs after a refinement pass. So two invariants
+hold: nothing ships straight from a raw draft, and once the early budget is
+spent the gate stops short-circuiting, guaranteeing the late gate is reached
+(bounded termination). See `builder.py` for how the two gates compose.
 """
 
 from __future__ import annotations
@@ -50,18 +40,8 @@ def early_stance_check(state: GraphState) -> GraphState:
         return {"stance": stance, "stance_reason": reason,
                 "early_action": "router", "history": history}
 
-    # Off-topic / anti-Israel raw survivor.
-    #
-    # While the EARLY regeneration budget lasts, skip refinement and regenerate
-    # now (the early gate's whole point: don't burn a refinement loop on a
-    # draft that's on the wrong track). The early gate has its OWN per-generation
-    # budget; the late gate resets it whenever it starts a fresh generation, so
-    # each generation gets a full set of early regenerations. Once it's spent
-    # (within the current generation), the early gate stops short-circuiting and
-    # lets the draft fall through to the refinement path
-    # (-> router); the LATE stance_check is the single authority that records
-    # gave_up and finalizes. This keeps termination bounded without an
-    # early -> finalize edge.
+    # Off-topic / anti-Israel raw survivor: regenerate while the early budget
+    # lasts, else fall through to refinement (see the module docstring).
     budget_left = early_regen_iter < MAX_EARLY_REGEN_ITERS
     if budget_left:
         new_early_regen_iter = early_regen_iter + 1
@@ -101,7 +81,7 @@ def early_stance_check(state: GraphState) -> GraphState:
 def early_stance_router(state: GraphState) -> str:
     """Route the early gate using the action the node already decided.
 
-    - "generate_initial": off-topic survivor with regen budget left (regenerate)
+    - "generate_initial": off-topic survivor with regeneration budget left (regenerate)
     - "router":           on-topic survivor, OR off-topic with the budget spent
                           (refine once; the late stance_check owns give-up)
 

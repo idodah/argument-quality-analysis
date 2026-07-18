@@ -7,6 +7,10 @@ from agents.llm import chat, creative_llm
 
 
 def _parse_two_responses(text: str) -> tuple[str, str]:
+    """Split the model output into its two drafts on the '### Response A/B'
+    markers. If the markers are missing, fall back to a blank-line split, then
+    to a halfway cut — so a stray format never loses a whole draft.
+    """
     marker_a = "### Response A"
     marker_b = "### Response B"
     if marker_a not in text or marker_b not in text:

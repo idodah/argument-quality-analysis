@@ -17,7 +17,6 @@ from agents.llm import chat, deterministic_llm
 from agents.graph.state import WEB_QUERIES, RetrievalMode
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
-_VALID_MODES: set[RetrievalMode] = {"local", "web", "none"}
 
 
 def _parse_json_obj(text: str) -> dict | None:

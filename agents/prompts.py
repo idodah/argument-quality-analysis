@@ -2,9 +2,8 @@
 Prompts for each node of the argument-refinement LangGraph.
 
 Every node works toward one goal: produce a respectful, factual, well-structured
-reply that defends Israel's position in response to a critical r/ChangeMyView
-post and could plausibly persuade its author. No slurs, ad-hominems, or
-inflammatory rhetoric.
+reply that defends Israel's position in response to a critical post and could
+plausibly persuade its author. No slurs, ad-hominems, or inflammatory rhetoric.
 """
 
 _STANCE_GUIDE = (

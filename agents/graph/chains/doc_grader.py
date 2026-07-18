@@ -23,8 +23,7 @@ _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 def _parse_relevant_indices(text: str, n: int) -> list[int]:
     """Parse {"relevant": [1, 3, ...]} -> zero-based indices (1-based in JSON).
 
-    On any parse failure, default to keeping ALL chunks (return every index):
-    a broken grader should not quietly discard retrieved evidence.
+    On any parse failure, default to keeping ALL chunks (return every index).
     """
     all_indices = list(range(n))
     match = _JSON_OBJ_RE.search(text)

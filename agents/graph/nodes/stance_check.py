@@ -6,8 +6,8 @@ Routes:
   - off_topic_or_anti    -> generate_initial (late regen loop, budget MAX_LATE_REGEN_ITERS)
 
 When both budgets are exhausted, sets `gave_up=True` with a give_up_reason and
-routes to finalize; finalize and run.py surface that honestly rather
-than ship a non-pro-Israel argument as if it were one.
+routes to finalize, which surfaces that honestly rather than shipping a
+non-pro-Israel argument as if it were one.
 
 Counters owned here:
   - refine_iter: incremented on neutral_needs_refine, reset by regeneration.
@@ -72,12 +72,10 @@ def stance_check(state: GraphState) -> GraphState:
     if stance == "off_topic_or_anti":
         new_late_regen_iter = late_regen_iter + 1
         out["late_regen_iter"] = new_late_regen_iter
-        # Reset the per-generation counters; the next generation starts fresh.
-        # This includes the EARLY regen budget: each fresh generation driven by
-        # the late gate gets the early gate's full short-circuit budget back, so
-        # the two loops compose multiplicatively (a new generation may again be
-        # regenerated up to MAX_EARLY_REGEN_ITERS times by the early gate before
-        # it reaches refinement).
+        # Reset every per-generation counter — including the early-regen budget —
+        # so the next generation starts fresh. Handing the early gate its budget
+        # back is what makes the two regen loops compose multiplicatively (see
+        # the cap block in agents.graph.state).
         out["refine_iter"] = 0
         out["ground_retries"] = 0
         out["consecutive_noop_refines"] = 0

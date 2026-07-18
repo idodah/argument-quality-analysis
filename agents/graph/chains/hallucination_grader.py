@@ -1,4 +1,4 @@
-"""Self-RAG hallucination grader: checks whether a refined argument is grounded in retrieved evidence.
+"""Self-RAG hallucination grader: is a refined argument grounded in its evidence?
 
 Returns a structured verdict {"grounded": bool, "issues": list[str]} parsed
 from the LLM's JSON output. Parser is forgiving: it tolerates stray prose

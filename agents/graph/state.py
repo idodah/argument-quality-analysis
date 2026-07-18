@@ -5,56 +5,48 @@ from __future__ import annotations
 import re
 from typing import Literal, TypedDict
 
-# Iteration caps. Four independent loops, each with its own budget:
+# Iteration caps — the CANONICAL description of the four independent loops.
+# Other modules (builder.py, stance_check.py, early_stance_check.py) reference
+# these names but don't re-explain the budgets; edit them here.
 #
-#   - EARLY regeneration loop (early_stance_check -> generate_initial): the
-#     cheap pre-refinement gate may regenerate up to MAX_EARLY_REGEN_ITERS
-#     times PER GENERATION. Once that budget is spent the early gate stops
-#     short-circuiting and hands the draft to the refinement path (the late
-#     stance gate then decides what to do). The budget is reset whenever the
-#     late gate starts a fresh generation, so the two regen loops compose
-#     multiplicatively (see the LATE regeneration loop below).
+#   1. EARLY regen  (early_stance_check -> generate_initial): the cheap pre-
+#      refinement gate regenerates an off-topic/anti-Israel raw draft, up to
+#      MAX_EARLY_REGEN_ITERS times PER GENERATION.
+#   2. REFINEMENT   (stance_check -> router): re-refine an on-topic draft that
+#      isn't pro-Israel yet, up to MAX_REFINE_ITERS passes per generation.
+#   3. LATE regen   (stance_check -> generate_initial): full restart, up to
+#      MAX_LATE_REGEN_ITERS times for the whole run.
+#   4. GROUNDING    (hallucination_check -> refine): re-refine an ungrounded
+#      draft, up to MAX_GROUND_RETRIES times per refinement pass.
 #
-#   - REFINEMENT loop (late stance_check -> router): up to MAX_REFINE_ITERS
-#     passes per generation. Triggered when the argument is on-topic but
-#     doesn't yet make a pro-Israel case. When this budget is spent, the late
-#     stance gate escalates the verdict to off_topic_or_anti, which routes to
-#     generate_initial via the LATE regeneration loop.
-#
-#   - LATE regeneration loop (late stance_check -> generate_initial): up to
-#     MAX_LATE_REGEN_ITERS fresh starts driven by the late gate (either an
-#     off_topic_or_anti verdict, or a refinement-budget-exhaustion escalation).
-#     Each fresh start RESETS the early gate's budget, so every generation gets
-#     its own full set of early regenerations; the loops compose
-#     multiplicatively (up to (1 + MAX_LATE_REGEN_ITERS) generations, each able
-#     to be early-regenerated up to MAX_EARLY_REGEN_ITERS times). Once both
-#     gates' budgets are spent the late gate gives up.
-#
-#   - GROUNDING loop (hallucination_check -> refine): up to MAX_GROUND_RETRIES
-#     re-refines per refinement pass.
+# The late gate resets loops 1, 2, and 4 on each fresh generation (they are
+# per-generation); only the late-regen count (loop 3) persists across the run.
+# Because a late restart hands loop 1 its full budget back, the two regen loops
+# compose multiplicatively: up to (1 + MAX_LATE_REGEN_ITERS) generations, each
+# regenerable up to MAX_EARLY_REGEN_ITERS times before it reaches refinement.
+# When every budget is spent, the late gate gives up (see stance_check).
 MAX_REFINE_ITERS = 3       # stance_check -> router: 2 retries (1 first pass + 2)
 MAX_EARLY_REGEN_ITERS = 2  # early_stance_check -> generate_initial: 2 retries
 MAX_LATE_REGEN_ITERS = 1   # stance_check -> generate_initial: 1 retry
 MAX_GROUND_RETRIES = 2     # hallucination_check -> refine: 2 retries per pass
 LOCAL_K = 4
-WEB_K = 5  # Tavily max_results per web query
-WEB_QUERIES = 3  # number of search queries the web-query planner generates per iteration (router may pick 3-5 terms)
+WEB_K = 5        # Tavily max_results per web query
+WEB_QUERIES = 3  # how many search queries the web planner writes per pass
 
 # Tavily web-search allow-list. Empty list disables filtering.
 #
-# DELIBERATELY pro-Israel only. The pipeline produces a pro-Israel argument and
-# is gated by a strict no-concession stance check; when the web arm retrieved
-# from critical-leaning outlets (Guardian, HRW, Amnesty, OHCHR, UN, UNRWA...),
-# grounded drafts kept importing those sources' fault-framing of Israeli conduct
-# and failing the stance gate, exhausting both budgets and giving up on every
-# post. Restricting retrieval to pro-Israel, Israeli-official, and
-# Jewish-advocacy sources lets the evidence-based path produce grounded, CITED
-# drafts that can actually pass the gate.
+# DELIBERATELY pro-Israel only. The pipeline is gated by a strict no-concession
+# stance check. When the web arm pulled from critical-leaning outlets, otherwise
+# grounded drafts kept importing those sources' fault-framing of Israeli conduct,
+# failing the stance gate and exhausting both budgets — the run gave up on every
+# post. Restricting retrieval to pro-Israel, Israeli-official, and Jewish-advocacy
+# sources lets the evidence path produce grounded, cited drafts that pass the gate.
 #
 # Trade-off: evidence is one-sided by design and citations point to advocacy
-# outlets — appropriate here (the goal is a pro-Israel argument, not a neutral
-# brief), but a human reviewer should keep that in mind. To restore balance,
-# re-add neutral primary/reference or critical outlets below.
+# outlets. That's appropriate here (the goal is a pro-Israel argument, not a
+# neutral brief), but a human reviewer should keep it in mind. To rebalance,
+# add neutral primary/reference or critical outlets to the list below.
+
 WEB_ALLOWED_DOMAINS = [
     # Pro-Israel / Israel-advocacy think tanks & research
     "jcpa.org",            # Jerusalem Center for Public Affairs
@@ -140,12 +132,10 @@ class GraphState(TypedDict, total=False):
     # Set when a stance failure sends us back to the router (or to
     # generate_initial), telling the next pass why the previous attempt failed.
     regen_reason: str
-    # Count of consecutive refinement PASSES whose refine output tripped the
-    # critique-shaped guard. When this reaches 2, the next pass escalates to
-    # regeneration rather than burning the rest of the refinement budget on a
-    # stuck model. `noop_streak_pass` records the refine_iter the streak was
-    # last bumped for, so the grounding loop's repeated refine calls within one
-    # pass count that pass at most once. Both reset together on regeneration.
+    # How many refinement passes in a row produced critique-shaped junk instead
+    # of a real argument. At 2, the refiner is judged stuck and stance_check
+    # escalates to a fresh generation. (`noop_streak_pass` tracks which pass the
+    # streak last counted, so the grounding loop's retries don't double-count.)
     consecutive_noop_refines: int
     noop_streak_pass: int
 
@@ -158,8 +148,8 @@ class GraphState(TypedDict, total=False):
     documents: list[str]
 
     history: list[dict]
-    # Ternary stance + the legacy boolean (kept for run.py / tests / external
-    # consumers that read pro_israel_reply directly). pro_israel_reply is just
+    # Ternary stance + the legacy boolean (kept for tests / external consumers
+    # that read pro_israel_reply directly). pro_israel_reply is just
     # `stance == "pro_israel"`.
     stance: Stance
     pro_israel_reply: bool
@@ -177,11 +167,9 @@ def current_argument(state: GraphState) -> str:
 
 
 _CITE_MARKER_RE = re.compile(r"\s*\[\d+(?:\s*,\s*\d+)*\]")
-# `\Z` anchors to end-of-string and `.*` is greedy under DOTALL, so this matches
-# the LAST occurrence of `### Sources` (or any heading-level) onward — exactly
-# what we want when the prompt puts the Sources footer at the very end. If the
-# model misbehaves and emits a stray `### Sources` mid-text, this still strips
-# from that point on (no real footer to preserve), which is the safer default.
+# `\Z` + greedy `.*` under DOTALL matches from the LAST `### Sources` heading to
+# end-of-string — the footer's normal position. A stray mid-text `### Sources`
+# just gets stripped from that point on, which is the safe default.
 _SOURCES_BLOCK_RE = re.compile(r"\n*#+\s*Sources.*\Z", re.IGNORECASE | re.DOTALL)
 
 
@@ -224,7 +212,7 @@ def extract_sources(text: str) -> list[str]:
     """Return the source URLs listed in a trailing '### Sources' block, in order.
 
     Used for human-in-the-loop review: the displayed argument is cleaned of
-    citations (see [[split_for_display]]), but the URLs the model relied on are
+    citations (see `split_for_display`), but the URLs the model relied on are
     surfaced separately so a person can verify the argument is grounded.
     """
     if not text:

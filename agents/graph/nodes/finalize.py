@@ -1,9 +1,10 @@
-"""Node: package the final state and report warnings.
+"""Node: package the final result and route to END.
 
-Terminal/publishing node. No model call, no comparison — the A-vs-B decision
-happened in `eliminate_loser` and all gates (grounding, stance) ran upstream.
-This node packages the result for the caller (split citations, roll up
-final_scores, print warnings + trajectory) and routes to END.
+Terminal node — no model call. Every gate (A-vs-B, grounding, stance) has
+already run upstream, so this just shapes `state["argument"]` for the caller:
+splits it into a clean `generation` (inline [n] markers and the '### Sources'
+footer stripped) plus the `sources` URL list surfaced for human verification,
+rolls up `final_scores`, and prints any warnings and the run trajectory.
 """
 
 from __future__ import annotations
@@ -12,18 +13,6 @@ from agents.graph.state import GraphState, split_for_display
 
 
 def finalize(state: GraphState) -> GraphState:
-    """Publish the current argument and surface upstream warnings.
-
-    Single-argument design: by the time we reach this node, `state["argument"]`
-    holds the surviving draft after eliminate_loser + any refinement passes.
-    `state["winner"]` records which raw initial (A or B) was picked — kept for
-    traceability in `final_scores`, not for control flow.
-
-    Output split: `generation` is the CLEAN argument (inline [n] markers and the
-    '### Sources' footer removed) for display; `sources` is the list of URLs the
-    model relied on, surfaced separately for human-in-the-loop verification. The
-    raw cited draft is kept in `generation_raw` for debugging/traceability.
-    """
     winner = state.get("winner", "A")
     final_argument = state.get("argument", "") or ""
     clean_arg, sources = split_for_display(final_argument)

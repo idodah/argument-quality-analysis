@@ -34,22 +34,17 @@ def refine(state: GraphState) -> GraphState:
         evidence,
         fix_notes=fix_notes,
     )
-    # Final guard: if the refiner produced commentary about the argument
-    # rather than the argument itself (despite the prompt), discard it and keep
-    # the current draft. We cannot rely on the ranker to
-    # reject critique-shaped text — it has been observed to score it HIGHER
-    # than a real argument — so this must be a deterministic drop.
-    # `consecutive_noop_refines` counts consecutive refinement PASSES that ended
-    # in a no-op, so stance_check can escalate a stuck refiner to a regeneration.
-    # A single pass can call refine multiple times via the grounding loop
-    # (hallucination_check -> refine, up to MAX_GROUND_RETRIES); we must count
-    # such a pass at most once. `noop_pass` records the refine_iter the streak
-    # was last bumped for, so repeated refine calls within the same pass are
-    # idempotent.
+    # Final guard: if the refiner wrote commentary ABOUT the argument instead of
+    # the argument itself, drop it and keep the current draft. This must be a
+    # deterministic check — the ranker has been seen to score critique-shaped
+    # text HIGHER than a real argument, so we can't rely on it to reject it.
     noop_streak = state.get("consecutive_noop_refines", 0)
     noop_pass = state.get("noop_streak_pass", -1)
     pass_n = state.get("refine_iter", 0)
     if looks_like_critique(improved):
+        # Count no-op PASSES (not calls) so stance_check can spot a stuck refiner
+        # and regenerate. The grounding loop can call refine several times in one
+        # pass; `noop_pass` guards against counting the same pass twice.
         if pass_n != noop_pass:
             noop_streak += 1
             noop_pass = pass_n

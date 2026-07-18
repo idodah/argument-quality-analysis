@@ -1,8 +1,7 @@
 """Opt-in LangSmith tracing for the agentic graph.
 
 LangChain/LangGraph auto-trace every chain, LLM, and node run to LangSmith when
-the standard env vars are set. This module is a tiny, idempotent helper that
-reports whether tracing is active and lets you set a project name from one place.
+the standard env vars are set.
 
 To enable, put in your .env (no code change needed):
     LANGSMITH_TRACING=true
@@ -24,12 +23,7 @@ def _truthy(val: str | None) -> bool:
 
 
 def setup_tracing() -> bool:
-    """Enable LangSmith tracing if configured. Returns True if active.
-
-    Mirrors the legacy LANGCHAIN_* vars to the newer LANGSMITH_* names (and vice
-    versa) so either spelling works, and defaults a project name. Safe to call
-    more than once.
-    """
+    """Enable LangSmith tracing if configured. Returns True if active."""
     api_key = os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY")
     tracing = _truthy(os.environ.get("LANGSMITH_TRACING")) or _truthy(os.environ.get("LANGCHAIN_TRACING_V2"))
 

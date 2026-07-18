@@ -1,9 +1,10 @@
 """Graph nodes: GraphState in, partial GraphState out.
 
-Nodes read the active side, call a chain or retriever, and return state deltas.
-They own the bookkeeping (iter counters, history, convergence flags); chains
-stay pure.
+Each node calls a chain or retriever and returns a state delta. Nodes own the
+bookkeeping — iteration counters, critique history, loop budgets — so the chains
+they call can stay pure.
 """
+
 
 from agents.graph.nodes.early_stance_check import early_stance_check, early_stance_router
 from agents.graph.nodes.eliminate_loser import eliminate_loser

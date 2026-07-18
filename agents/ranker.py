@@ -1,11 +1,10 @@
-"""Lazy singleton wrapper around the fine-tuned Qwen pairwise ranker.
+"""Lazy wrapper around the fine-tuned Qwen pairwise ranker.
 
 Two backends, selected by environment:
 
   - **SageMaker** (deployed): set `SAGEMAKER_RANKER_ENDPOINT` to the async
     endpoint name. `score_pair` POSTs the request to S3 and calls
-    `invoke_endpoint_async`, then polls S3 for the result. No heavy ML deps in
-    the calling process — the GPU work happens in SageMaker.
+    `invoke_endpoint_async`, then polls S3 for the result.
   - **In-process** (local / offline): set `RANKER_PATH` to a checkpoint dir or
     HF repo id. The QLoRA-fine-tuned Qwen is loaded once via transformers/peft
     and scored in-process. This is the path the offline tests and CLI use.
@@ -26,7 +25,7 @@ _RANKER: "Ranker | None" = None
 
 # How long to wait for an async SageMaker result before giving up, and how often
 # to poll S3 for it. A scale-to-zero endpoint may cold-start, so the timeout is
-# generous; the batch job is not latency-sensitive.
+# generous.
 _ASYNC_TIMEOUT_S = float(os.environ.get("SAGEMAKER_RANKER_TIMEOUT_S", "600"))
 _ASYNC_POLL_S = float(os.environ.get("SAGEMAKER_RANKER_POLL_S", "2"))
 

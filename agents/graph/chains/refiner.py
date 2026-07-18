@@ -73,7 +73,4 @@ def refine_draft(
         fix_notes=fix_notes or "(none — apply the critique history)",
         evidence=evidence,
     )
-    # No retry on critique-shaped output: the refine node already discards such
-    # output deterministically and keeps the current draft (see refine.py), so a
-    # second LLM call here would be redundant.
     return chat(llm, prompts.REFINE_SYSTEM, user)

@@ -1,10 +1,10 @@
 """Node: A-vs-B compare on the INITIAL drafts; eliminate the loser.
 
 Runs immediately after `generate_initial`. Compares the two raw drafts on the
-fine-tuned Qwen ranker, keeps the winner as the active side, and marks the
-other side converged so the rest of the graph never touches it. This moves
-the only A-vs-B decision to the moment when both arguments are at the same
-level of polish (raw initial), which is the fair comparison.
+fine-tuned Qwen ranker and writes the winner to `argument`; the loser is simply
+dropped and nothing downstream reads it again. This is the only A-vs-B decision
+in the graph, made when both drafts are equally unpolished (raw initial), which
+is the fair point to compare them.
 
 The ranker only decides which of the two drafts is *better* — it does not
 verify that the winner is actually pro-Israel. That job belongs to the stance

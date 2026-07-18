@@ -7,16 +7,12 @@ used by the CLI (``run.py``), the web app (``webapp/app.py``), and the harvester
 """
 
 from __future__ import annotations
+from agents.graph.builder import run_refinement
 
 
 def generate_pro_israel_response(title: str, body: str) -> dict:
-    """Run the full agentic graph on one post and return the result.
-
-    `agents.graph.builder` is imported lazily so importing this module does not
-    pull in the graph / Qwen ranker until a generation is actually requested.
-    """
-    from agents.graph.builder import run_refinement
-
+    """Run the full agentic graph on one post and return the result."""
+    
     out = run_refinement(topic=title, original_post=body)
     return {
         "generation": out.get("generation") or out.get("argument", ""),
