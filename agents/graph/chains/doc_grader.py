@@ -1,9 +1,10 @@
-"""Self-RAG relevance grader: a per-chunk yes/no verdict over retrieved docs.
+"""CRAG relevance grader: a per-chunk yes/no verdict over retrieved docs.
 
 `grade_docs_relevant` returns the SUBSET of chunks the model judged relevant to
-refining the draft, in their original order. This is the canonical Self-RAG
+refining the draft, in their original order. This is the canonical CRAG
 move: keep the good chunks, drop only the noise — rather than collapsing the
-whole pool to a single keep/drop verdict.
+whole pool to a single keep/drop verdict. When nothing survives, the caller
+(`grade_docs`) takes CRAG's corrective action and falls back to a web search.
 
 Parser is forgiving and defaults to keeping a chunk on parse failure, so a
 broken grader never silently empties the citation pool.

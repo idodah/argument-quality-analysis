@@ -91,8 +91,8 @@ def retrieve_web(state: GraphState) -> GraphState:
 
 
 def web_search(state: GraphState) -> GraphState:
-    """Self-RAG web-search fallback, triggered when grade_docs finds the local
-    documents irrelevant (and drops them). Runs a Tavily search (max_results=5)
+    """CRAG corrective web-search fallback, triggered when grade_docs finds the
+    local documents irrelevant (and drops them). Runs a Tavily search (max_results=5)
     and merges the results into `documents` (deduped). Since grade_docs clears
     irrelevant docs first, `documents` is normally empty here, so this fills it
     with web results."""

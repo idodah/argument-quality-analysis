@@ -27,8 +27,8 @@ quality and learn to rank arguments accordingly.
    arguments changed the reader's view.
 3. **Agents** (`agents/`) — a LangGraph workflow that drafts **two** candidate
    pro-Israel rebuttals to a given post, then iteratively refines the stronger
-   one against retrieved evidence, using Adaptive-RAG, Self-RAG, Reflective-RAG,
-   and Reflexion patterns.
+   one against retrieved evidence, using Adaptive-RAG, Self-RAG, Corrective-RAG
+   (CRAG), and Reflexion patterns.
 
 Supporting these are **RAG** (`rag/`), a pro-Israel retrieval corpus of scraped
 delta-awarded CMV-Israel arguments ingested into Chroma so the agent can ground
@@ -213,12 +213,12 @@ patterns** that the wiring implements.
   CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
-- **grade_docs** — Self-RAG per-chunk relevance grading. Keeps the relevant
+- **grade_docs** — CRAG per-chunk relevance grading. Keeps the relevant
   subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
   and `web_search=True` routes to the web-search fallback first.
-- **web_search** — fallback triggered by an irrelevant grade: runs a Tavily
-  search (planning queries from the critique if the router didn't) and fills
-  the citation pool with web results before reflecting.
+- **web_search** — CRAG corrective action, triggered by an irrelevant grade:
+  runs a Tavily search (planning queries from the critique if the router didn't)
+  and fills the citation pool with web results before reflecting.
 - **reflect** — generates a critique of the current draft grounded in the
   retrieved evidence, comparing it against the original post (what's missing /
   superfluous). Each critique is appended to `critique_history` (Reflexion).
@@ -275,11 +275,12 @@ Four patterns are fused into the graph:
 - **Adaptive RAG** — each pass the router picks one of three routes: local
   Chroma retrieval, Tavily web search, or `none` (skip retrieval entirely and
   refine the current draft on the evidence already in hand).
-- **Self-RAG** — two layers: `grade_docs` grades each retrieved chunk for
-  relevance and keeps only the relevant subset (triggering a web search if none
-  survive), and `hallucination_check` verifies the refined draft is grounded in
-  the evidence.
-- **Reflective RAG** — `reflect` grounds the critique in retrieved evidence.
+- **Corrective RAG (CRAG)** — `grade_docs` grades each retrieved chunk for
+  relevance and keeps only the relevant subset; when no chunk survives, the pool
+  is dropped and the run takes the corrective action of falling back to a
+  `web_search` before reflecting, rather than generating on bad evidence.
+- **Self-RAG** — `hallucination_check` verifies the refined draft is actually
+  grounded in the retrieved evidence, re-refining while it is not.
 - **Reflexion** — every critique is accumulated into a running
   `critique_history` that the refiner consumes in full, so it stops repeating
   fixed mistakes.

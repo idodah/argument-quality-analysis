@@ -1,4 +1,6 @@
-"""Conditional-edge routing functions for the merged self-RAG graph.
+"""Conditional-edge routing functions for the merged RAG graph
+(Adaptive-RAG routing, CRAG doc grading + web-search fallback, Self-RAG
+groundedness, Reflexion critique memory).
 
 Three independent loops + one forward branch:
 
