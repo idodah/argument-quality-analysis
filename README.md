@@ -151,8 +151,8 @@ chunks are labelled as delta-awarded arguments with no URL. Mislabeling a Reddit
 comment as an authoritative source would invite the generator to cite it as
 evidence.
 
-**Reference half** (the backbone — 25 articles → ~650 chunks covering all eight
-tropes):
+**Reference half** (the backbone — 30 articles → 744 chunks from USHMM,
+Wikipedia, and ADL, covering every catalogued trope):
 
 ```bash
 uv run python -m rag.scrape_reference       # -> data/trope_reference.parquet
@@ -386,7 +386,7 @@ The `harvester/` package applies the agent workflow to live data: it searches
 three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
 advancing an antisemitic trope, drafts a factual refutation
 with the same `agents.generate` entrypoint, and pushes it to the operator
-via ntfy app. It is **read + draft + notify only** — it never posts back; a human
+via Telegram (or ntfy). It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
 
 Detection is deliberately conservative: a cheap keyword prefilter (trope
@@ -399,7 +399,7 @@ than publicly labelling someone a bigot.
 ```
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
-  │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
+  │ orchestrate.py      │   │ classify.py              │   │ notify.py (telegram) │
   │  search 3 platforms │──►│  keyword + LLM trope     │──►│ tracking.py          │
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
@@ -419,10 +419,34 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
 ```
 
-Notifier setup: set `NTFY_TOPIC=cmv-<topic_name>` in `.env` and subscribe to that
-topic in the ntfy app. The agent graph
-also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`, `RANKER_PATH`,
-`HF_TOKEN`).
+**Notifier setup.** Two backends; pick one with `NOTIFY_BACKEND=telegram|ntfy`,
+or leave it unset and whichever is configured wins (Telegram first).
+
+*Telegram (recommended)* — the only backend that delivers a long argument
+intact. Messages up to 4096 characters go as text; anything longer is uploaded
+as a single `.md` document (bots may send up to 50 MB), so nothing is cut, and
+it stays in the chat history rather than expiring.
+
+```
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_CHAT_ID=987654321
+```
+
+Create the bot with [@BotFather](https://t.me/BotFather) (`/newbot`), then
+**message it once** — a bot cannot open a conversation with you — and read your
+chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+
+*ntfy* — set `NTFY_TOPIC=cmv-<topic_name>` and subscribe to that topic in the
+ntfy app. Optional `NTFY_SERVER` (default `https://ntfy.sh`) and `NTFY_TOKEN`.
+
+> ntfy caps a notification body at 4096 bytes, so `notify._send_ntfy` splits a
+> longer message into several independent pushes: they arrive unordered and cut
+> mid-sentence, which is what motivated the Telegram backend. ntfy.sh is also a
+> public relay — the text passes through a third-party server on a guessable
+> topic — whereas a Telegram bot delivers only to your configured chat id.
+
+The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
+`RANKER_PATH`, `HF_TOKEN`).
 
 Each run searches every platform and drops posts older than `--max-age-hours`
 (default 24) or already answered. Whatever new posts remain within that window it
@@ -444,7 +468,8 @@ Reddit permalink) is recorded in a `seen` store.
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (political criticism of Israel is excluded by design). |
-| `notify.py` | Send one ntfy push per generated response (the only outbound write). |
+| `notify.py` | Backend dispatch: send one push per generated response (the only outbound write). |
+| `notify_telegram.py` | Telegram backend — long arguments go as a `.md` document instead of being split. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse

@@ -1,6 +1,6 @@
 """MCP server exposing multi-platform post reading as agent tools (read-only).
 
-An orchestrator agent decides — across Lemmy, PieFed, and Reddit — which anti-Israel 
+An orchestrator agent decides — across Lemmy, PieFed, and Reddit — which trope-advancing 
 threads are worth answering and where, then drafts replies. That runtime decision 
 over heterogeneous-but-uniform backends is a real agent/tool boundary, which is
 what MCP is for. The tools are READ-ONLY: detect + draft + notify; never post.

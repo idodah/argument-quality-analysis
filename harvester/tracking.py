@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS responses (
     title           TEXT NOT NULL,
     topic           TEXT,                     -- the CMV topic (= the post title)
     url             TEXT,
-    original_post   TEXT,                     -- the anti-Israel post body we replied to
+    original_post   TEXT,                     -- the trope-advancing post body we replied to
     generation      TEXT NOT NULL,            -- the generated rebuttal
     sources         TEXT,                     -- JSON array of source urls
     grounded        INTEGER NOT NULL,         -- 0/1

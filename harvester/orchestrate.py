@@ -1,5 +1,5 @@
-"""Multi-platform orchestrator: detect anti-Israel posts across Lemmy, PieFed,
-and Reddit, draft pro-Israel rebuttals, and notify the operator.
+"""Multi-platform orchestrator: detect posts advancing antisemitic tropes across
+Lemmy, PieFed, and Reddit, draft factual refutations, and notify the operator.
 
 Each run:
   1. searches every platform via the Fediverse adapters;
@@ -8,7 +8,7 @@ Each run:
      or one seen in a prior run, is never answered twice);
   3. if nothing new is in window, does nothing;
   4. otherwise sorts the candidates **Reddit-first, then newest**, and answers up
-     to `--max-generations` of them (classify -> draft -> notify via ntfy).
+     to `--max-generations` of them (classify -> draft -> notify).
 Read + draft + notify ONLY — never posts back.
 
     uv run python -m harvester.orchestrate                  # defaults: 3 max, last 24h
@@ -153,7 +153,7 @@ def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
         return counts
 
     # --- Phase 2: prefer Reddit, then newest; process up to the cap ---
-    # The cap counts confirmed anti-Israel HITS, not just successful generations:
+    # The cap counts confirmed trope HITS, not just successful generations:
     # a hit is the point at which paid work happens (a real run drafts; a dry-run
     # would have). Counting only `generated` would let --dry-run run the LLM
     # classifier on every candidate while never reaching the cap. `attempts` is
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Search terms.")
     parser.add_argument("--limit", type=int, default=25, help="Posts per platform.")
     parser.add_argument("--max-generations", type=int, default=3,
-                        help="Cap on confirmed anti-Israel hits handled this invocation "
+                        help="Cap on confirmed trope hits handled this invocation "
                              "(default: 3) — i.e. drafts on a real run, or classifier "
                              "calls that would have drafted on a --dry-run. Use 0 for unlimited.")
     parser.add_argument("--max-age-hours", type=float, default=24.0,
@@ -231,8 +231,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.dry_run and not args.no_notify and not notify_mod.configured():
-        print("[orchestrate] ERROR: ntfy not configured. Set NTFY_TOPIC in your .env, "
-              "or pass --no-notify / --dry-run.", file=sys.stderr)
+        print("[orchestrate] ERROR: no notifier configured. Set TELEGRAM_BOT_TOKEN "
+              "+ TELEGRAM_CHAT_ID (recommended — long arguments arrive whole) or "
+              "NTFY_TOPIC in your .env, or pass --no-notify / --dry-run.",
+              file=sys.stderr)
         return 2
 
     run(platforms=platforms, query=args.query, limit=args.limit,
