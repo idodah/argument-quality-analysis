@@ -70,6 +70,10 @@ def main(reset: bool = False) -> None:
         # page_content = argument alone -> the embedding matches on the argument.
         page_content = (row.argument or "").strip()[:ARGUMENT_MAX_CHARS]
         metadata = {
+            # Distinguishes these from reference docs in the same collection;
+            # LocalRetriever._format labels each kind differently so the
+            # generator knows a CMV comment is persuasive, not authoritative.
+            "source_type": "cmv_delta",
             "source": "cmv_israel",
             "thread_id": str(row.thread_id),
             "comment_id": str(row.comment_id),

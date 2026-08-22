@@ -62,8 +62,23 @@ class LocalRetriever:
     def _format(doc) -> str:
         """Reassemble a retrieved argument with its post context for the generator.
 
-        CMV-Israel docs embed the argument alone but carry topic/original_post
-        in metadata; a doc missing both falls back to the bare page_content.
+        The collection holds two kinds of document, distinguished by the
+        `source_type` metadata field:
+
+          - "cmv_delta"  — a delta-awarded CMV comment. Embeds the argument
+            alone but carries topic/original_post in metadata, which are
+            reassembled here as context.
+          - "reference"  — an authoritative article (USHMM, Wikipedia). Carries
+            a real `url`, so it is emitted with a '[url]' line and is therefore
+            citable; refine/hallucination_check treat a chunk's '[url]' as the
+            only legitimate citation target.
+
+        Provenance is stated explicitly in the label because the two carry very
+        different authority: a CMV comment persuaded one human and is NOT a
+        factual source, while a reference article is. Mislabeling the former as
+        the latter would invite the generator to cite it as evidence.
+
+        A doc with neither shape falls back to the bare page_content.
 
         Labels use bracket prefixes ('[topic]', '[original_post]', '[argument]')
         rather than markdown '###' headers. The ### form collides with the
@@ -74,6 +89,19 @@ class LocalRetriever:
         consistent with the web arm's '[url]' / '[title]' header format.
         """
         meta = doc.metadata or {}
+
+        if meta.get("source_type") == "reference":
+            parts = []
+            if meta.get("url"):
+                parts.append(f"[url] {meta['url']}")
+            if meta.get("title"):
+                parts.append(f"[title] {meta['title']}")
+            origin = meta.get("source", "reference")
+            parts.append(
+                f"[reference article — authoritative source: {origin}]\n{doc.page_content}"
+            )
+            return "\n\n".join(parts)
+
         topic = meta.get("topic")
         post = meta.get("original_post")
         if not topic and not post:

@@ -51,9 +51,10 @@ quality and learn to rank arguments accordingly.
    one against retrieved evidence, using Adaptive-RAG, Self-RAG, Corrective-RAG
    (CRAG), and Reflexion patterns.
 
-Supporting these are **RAG** (`rag/`), a retrieval corpus of scraped
-delta-awarded CMV refutations ingested into Chroma so the agent can ground
-its rebuttals; the **harvester**
+Supporting these are **RAG** (`rag/`), a two-part retrieval corpus — authoritative
+trope-refutation articles (USHMM, Wikipedia) for the factual record, plus
+delta-awarded CMV comments for persuasive form — ingested into Chroma so the
+agent can ground its rebuttals; the **harvester**
 (`harvester/`), which detects trope-advancing posts live across the three social
 networks (Reddit, and the Fediverse platforms Lemmy and PieFed) and drafts
 rebuttals with the agent workflow; **infra** (`infra/`), the Terraform + GitHub
@@ -143,26 +144,93 @@ train on.
 uv run python -m preprocessing.filter_by_tokens
 ```
 
-### The refutation retrieval corpus
+### The retrieval corpus
 
 The `rag/` package builds the evidence corpus the agent grounds its rebuttals
-in **delta-awarded CMV refutations**. It scrapes CMV threads, classifies how
-each argument handles antisemitic tropes (`refutation` / `trope` /
-`political_argument` / `neutral` / `mixed`), and ingests the high-confidence
-refutations (i.e. persuasive, real-world rebuttals that already worked on
-a human) into the Chroma collection `pro_israel_corpus`. Arguments classified
-`political_argument` are deliberately excluded, so the evidence the agent cites
-is factual debunking rather than political advocacy.
+in. It has **two halves**, which play different roles and are tagged in Chroma
+metadata by `source_type` so retrieval can tell them apart:
 
-> The Chroma collection name and the `*_pro*` data filenames are retained from
-> the project's earlier iteration to avoid a disruptive data migration; the
-> corpus they hold is refutations.
+| half | `source_type` | what it is | why |
+| --- | --- | --- | --- |
+| **Reference** | `reference` | Articles from the USHMM Holocaust Encyclopedia and Wikipedia that document each trope — its origin, who propagated it, and the evidence against it. | Authoritative and **citable**. This is what `hallucination_check` grades a draft's factual claims against. |
+| **CMV** | `cmv_delta` | Delta-awarded r/changemyview comments. | Persuasive form — arguments that demonstrably moved a human. **Not** a factual source. |
+
+The distinction matters and is enforced in
+`agents.retrieval.LocalRetriever._format`: reference chunks are emitted with a
+`[url]` line (making them legitimate citation targets for `refine`), while CMV
+chunks are labelled as delta-awarded arguments with no URL. Mislabeling a Reddit
+comment as an authoritative source would invite the generator to cite it as
+evidence.
+
+**Reference half** (the backbone — 25 articles → ~650 chunks covering all eight
+tropes):
+
+```bash
+uv run python -m rag.scrape_reference       # -> data/trope_reference.parquet
+uv run python -m rag.ingest_reference       # -> .chroma/ pro_israel_corpus
+uv run python -m rag.scrape_reference --smoke   # 2 docs/source, writes nothing
+```
+
+Article titles and slugs are a hand-curated catalogue in
+`rag/scrape_reference.py`, each verified to resolve and return substantive prose.
+Access was checked before use: USHMM's and ADL's `robots.txt` both permit the
+paths used (only `/search` and `/resources/search/research-analysis`
+respectively are disallowed), and Wikipedia is read through its public action
+API rather than scraped.
+
+> **Retrieval hazard worth knowing about.** Any article *about* a myth must
+> quote the myth, so the corpus necessarily contains trope text — and embedding
+> search preferentially matches it, because a conspiracy-shaped query looks like
+> conspiracy-shaped prose. Querying the Rothschild banking myth, for example,
+> ranks 19th-century quotations that read as pro-conspiracy out of context above
+> the article's own debunking. Two things mitigate this: the CRAG `grade_docs`
+> node drops chunks it judges irrelevant (typically 1–2 of 4 on such queries),
+> and the catalogue deliberately pairs each descriptive article with a
+> refutation-focused one. Curating a purely descriptive article (e.g.
+> "Rothschild family" alone, with no debunking source alongside it) leaves
+> `hallucination_check` nothing to verify a refutation against — it flagged
+> exactly that gap during development, which is why the ADL and conspiracy-theory
+> entries were added.
+
+> **Known limitation: `grounded=False` over-fires on refutations.** A refutation
+> is largely made of *negative* claims ("owning every central bank is not
+> supported by the documented record"), and a negative cannot be positively
+> supported by any retrieved chunk. `HALLUCINATION_GRADER_SYSTEM` tells the
+> grader not to flag framing or opinion, but says nothing about negative
+> existence claims, so it flags them as ungrounded. In practice this means a
+> correct, well-sourced refutation can finish with `grounded=False` and a
+> warning listing sentences that are actually its strongest lines. Read the flag
+> as "contains unverifiable-shaped assertions", not "contains fabrications", and
+> check the listed issues before believing it. Fixing this properly means
+> teaching the grader to treat "the evidence does not support X" as grounded
+> when no chunk asserts X — a prompt change to the grader, not a graph change.
+
+**CMV half** (a supplement):
 
 ```bash
 uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
 uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
 uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
 ```
+
+`classify_stance` sorts each argument into `refutation` / `trope` /
+`political_argument` / `neutral` / `mixed` and keeps only high-confidence
+`refutation` rows; `political_argument` exists as its own class specifically so
+criticism of the Israeli government is identified and kept **out** of the
+evidence store.
+
+> **Yield warning.** CMV is a poor source for this domain, and the numbers say so:
+> a survey of trope-keyword threads found ~0.25 delta comments per thread, and
+> most matched threads debate the *legal* question (should denial be criminalized)
+> rather than the factual one — a delta-winning comment there argues the First
+> Amendment, not whether the Holocaust happened. Worse, keyword searches for
+> `antisemitism` and `jews` return mostly Israel-politics threads, i.e. exactly the
+> material the classifier is built to exclude. Treat this half as an optional
+> supplement; the reference corpus is what the system actually runs on.
+
+> The Chroma collection name (`pro_israel_corpus`) and the `*_pro*` data
+> filenames are retained from the project's earlier iteration to avoid a
+> disruptive data migration; the corpus they hold is trope refutations.
 
 ## Baselines
 
@@ -237,8 +305,11 @@ patterns** that the wiring implements.
   edges straight to `reflect`, adding no new documents and preserving the
   existing pool, so refinement still runs and can cite previously-grounded facts
   without fetching fresh evidence.
-- **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
-  CMV refutations) using the topic + post as the query.
+- **retrieve_local** — queries the Chroma `pro_israel_corpus` (both halves:
+  reference articles and delta-awarded CMV comments) using the topic + post as
+  the query. Deliberately unfiltered by `source` — filtering to one source value
+  would hide the reference corpus and leave `hallucination_check` with nothing
+  local to verify against.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
 - **grade_docs** — CRAG per-chunk relevance grading. Keeps the relevant
