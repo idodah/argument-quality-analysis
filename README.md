@@ -300,8 +300,8 @@ reviews and decides whether to post.
 
 Detection is deliberately conservative: a cheap keyword prefilter (trope
 vocabulary, not geopolitics) gates an LLM classifier that is instructed to
-answer "no" whenever a post is political criticism of Israel, is quoting or
-debunking a trope, or is simply ambiguous. Combined with the human-in-the-loop
+answer "no" whenever a post is criticism of a government or state, is quoting
+or debunking a trope, or is simply ambiguous. Combined with the human-in-the-loop
 boundary above, a false positive costs an operator one discarded draft rather
 than publicly labelling someone a bigot.
 
@@ -325,7 +325,7 @@ exits.
 # Defaults: ≤3 answers, only posts from the last 24h, Reddit-first then newest.
 uv run python -m harvester.orchestrate
 uv run python -m harvester.orchestrate --dry-run                # search+classify, no spend
-uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
+uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
 ```
 
 **Notifier setup.** Notifications go to **Telegram** — the only backend, and
@@ -372,7 +372,7 @@ Reddit permalink) is recorded in a `seen` store.
 | `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
-| `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (political criticism of Israel is excluded by design). |
+| `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
 | `notify.py` | Message shape (`format_result`) + re-exports the Telegram transport (the only outbound write). |
 | `notify_telegram.py` | Telegram transport — long arguments go as a `.md` document instead of being split. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
