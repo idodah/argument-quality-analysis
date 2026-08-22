@@ -21,9 +21,14 @@ _CRITIQUE_PHRASES = [
     r"\bto change your view\b.{0,40}\btry\b",
     # The reflect prompt's planning voice talking ABOUT the response itself.
     # These only make sense if the writer is meta-commenting on an argument
-    # under construction, not actually writing one.
-    r"\bthe pro-israel (?:case|rebuttal|response|argument|reply) should\b",
-    r"\b(?:israel|the pro-israel side) should be rebutted on\b",
+    # under construction, not actually writing one. Retargeted with the rest of
+    # the pipeline: the previous patterns matched "the pro-israel case should"
+    # and "israel should be rebutted on", phrasing the current prompts cannot
+    # produce, so they were dead while the equivalent refutation-voice leak
+    # went undetected.
+    r"\bthe (?:refutation|rebuttal|response|argument|reply) should\b",
+    r"\bthe (?:trope|myth|claim) should be (?:refuted|rebutted|addressed) (?:on|by|with)\b",
+    r"\bthis (?:refutation|response) needs to\b",
     r"\b(?:section|paragraph) needs to be addressed in terms of\b",
 ]
 _CRITIQUE_RE = re.compile("|".join(_CRITIQUE_PHRASES), re.IGNORECASE)

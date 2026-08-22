@@ -1,10 +1,10 @@
 """LangGraph wiring: builds the entire graph.
 
 Flow:
-  generate_initial    -> two distinct pro-Israel drafts
+  generate_initial    -> two distinct candidate refutations
   eliminate_loser     -> Qwen pairwise compare (once per generation)
   early_stance_check  -> cheap stance gate on the RAW survivor: off-topic /
-                         anti-Israel survivors regenerate immediately (no
+                         off-topic / drifting survivors regenerate immediately (no
                          refinement pass wasted); on-topic survivors fall
                          through to the router.
   router              -> local | web | none retrieval (LLM-decided)
@@ -17,7 +17,7 @@ Flow:
                        per refinement pass; reset by the router each pass)
        grounded     -> stance_check
   stance_check      -> classify the refined survivor:
-       pro_israel           -> finalize -> END
+       refutes_trope           -> finalize -> END
        neutral_needs_refine -> router (refinement loop, MAX_REFINE_ITERS)
        off_topic_or_anti    -> generate_initial (late regeneration loop, MAX_LATE_REGEN_ITERS)
        gave_up              -> finalize -> END
@@ -26,10 +26,10 @@ Four iteration caps bound every loop; see `agents.graph.state` for the
 canonical description of the budgets and how the two regeneration loops compose.
 Only the late stance_check decides gave_up (when the whole-run late-regen budget
 is spent): it sets gave_up=True and routes to finalize, which reports the
-give-up honestly rather than shipping a non-pro-Israel argument as the answer.
+give-up honestly rather than shipping a non-refutation as the answer.
 
 Two stance gates, complementary:
-  - early_stance_check (before refinement) catches ONLY off-topic / anti-Israel
+  - early_stance_check (before refinement) catches ONLY off-topic / drifting
     survivors and regenerates immediately (while regeneration budget lasts), so a
     hopeless draft no longer burns a full refinement loop first. It has just two
     out-edges (generate_initial | router) and never routes to finalize: once the
@@ -91,7 +91,7 @@ def build_graph():
     g.set_entry_point("generate_initial")
     g.add_edge("generate_initial", "eliminate_loser")
     # Cheap pre-refinement stance gate on the raw survivor. It catches ONLY the
-    # off-topic / anti-Israel case (which a refinement pass cannot rescue) and
+    # off-topic / drifting case (which a refinement pass cannot rescue) and
     # regenerates immediately, instead of burning a full router -> retrieve ->
     # reflect -> refine -> ground cycle first. On-topic survivors fall through to
     # the router, so the late stance_check remains the authority on shipping and
@@ -141,7 +141,7 @@ def build_graph():
 
     # Stance check (reached only from hallucination_check, i.e. after a full
     # refine pass — the raw survivor was already screened by early_stance_check):
-    #   pro_israel           -> finalize (END)
+    #   refutes_trope           -> finalize (END)
     #   neutral_needs_refine -> router (refinement loop)
     #   off_topic_or_anti    -> generate_initial (regeneration loop)
     #   gave_up (caps spent) -> finalize (END), gave_up reported honestly
@@ -194,9 +194,9 @@ def _main() -> None:
 
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Refine a pro-Israel argument against an anti-Israel CMV post.")
+    parser = argparse.ArgumentParser(description="Refine a factual refutation of a post advancing an antisemitic trope.")
     parser.add_argument("--topic", required=True, help="Topic / CMV title.")
-    parser.add_argument("--post", required=True, help="The anti-Israel original post body.")
+    parser.add_argument("--post", required=True, help="The original post body advancing the trope.")
     args = parser.parse_args()
 
     out = run_refinement(topic=args.topic, original_post=args.post)

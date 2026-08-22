@@ -189,7 +189,7 @@ STANCE_CHECK_SYSTEM = (
     "into one of three verdicts. Pick exactly one. (The label strings are "
     "historical names kept for compatibility; judge only by the criteria "
     "below.)\n\n"
-    "  - \"pro_israel\" — SUCCESSFUL REFUTATION. The reply identifies the trope "
+    "  - \"refutes_trope\" — SUCCESSFUL REFUTATION. The reply identifies the trope "
     "the post advances and refutes it on the factual or historical record "
     "(where the myth came from, who spread it, what the evidence actually "
     "shows). It addresses the claim, not the poster, and does not argue for or "
@@ -205,7 +205,7 @@ STANCE_CHECK_SYSTEM = (
     "for clear cases; when uncertain between off-topic and neutral, pick "
     "\"neutral_needs_refine\".\n\n"
     "Return ONLY this JSON, no markdown fences:\n"
-    "  {{\"stance\": \"pro_israel\" | \"neutral_needs_refine\" | \"off_topic_or_anti\", "
+    "  {{\"stance\": \"refutes_trope\" | \"neutral_needs_refine\" | \"off_topic_or_anti\", "
     "\"reason\": \"<one short sentence; if not a successful refutation, name the "
     "specific gap, ad-hominem, or political drift>\"}}"
 )

@@ -1,7 +1,7 @@
 """Node: cheap pre-refinement stance gate on the raw survivor.
 
 Runs right after `eliminate_loser`, before any retrieval/refine. It catches the
-one case a refinement pass can't rescue — an off-topic or anti-Israel draft —
+one case a refinement pass can't rescue — an off-topic or drifting draft —
 and regenerates immediately instead of burning a full refine cycle on it first.
 
 Routing (via the stamped `early_action`):
@@ -40,7 +40,7 @@ def early_stance_check(state: GraphState) -> GraphState:
         return {"stance": stance, "stance_reason": reason,
                 "early_action": "router", "history": history}
 
-    # Off-topic / anti-Israel raw survivor: regenerate while the early budget
+    # Off-topic / drifting raw survivor: regenerate while the early budget
     # lasts, else fall through to refinement (see the module docstring).
     budget_left = early_regen_iter < MAX_EARLY_REGEN_ITERS
     if budget_left:
@@ -55,7 +55,7 @@ def early_stance_check(state: GraphState) -> GraphState:
             "ground_retries": 0,
             "consecutive_noop_refines": 0,
             "noop_streak_pass": -1,
-            "regen_reason": reason or "the initial survivor was off-topic or anti-Israel",
+            "regen_reason": reason or "the initial survivor was off-topic, attacked the poster, or drifted into political advocacy",
             "early_action": "generate_initial",
             "history": state.get("history", []) + [{
                 "stage": "early_stance_check", "stance": stance,
@@ -69,7 +69,7 @@ def early_stance_check(state: GraphState) -> GraphState:
     return {
         "stance": stance,
         "stance_reason": reason,
-        "regen_reason": reason or "the initial survivor was off-topic or anti-Israel",
+        "regen_reason": reason or "the initial survivor was off-topic, attacked the poster, or drifted into political advocacy",
         "early_action": "router",
         "history": state.get("history", []) + [{
             "stage": "early_stance_check", "stance": stance,

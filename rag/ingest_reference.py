@@ -2,9 +2,9 @@
 Ingest authoritative trope-refutation documents into the Chroma vector store.
 
 Companion to `rag.ingest_rag`, which ingests delta-awarded CMV comments. Both
-write to the same `pro_israel_corpus` collection (name retained from an earlier
-iteration) so `retrieve_local` needs no graph changes; documents are told apart
-by their `source_type` metadata:
+write to the same `trope_refutation_corpus` collection, so `retrieve_local`
+needs no graph changes; documents are told apart by their `source_type`
+metadata:
 
     source_type="cmv_delta"  -> persuasive, human-validated, NOT a factual source
     source_type="reference"  -> authoritative and citable (carries a real url)

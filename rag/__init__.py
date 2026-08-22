@@ -6,11 +6,11 @@ into the Chroma vector store that ``agents.retrieval.LocalRetriever`` queries.
 Arguments classified ``political_argument`` (criticism of the Israeli
 government — political speech, not a trope) are excluded from the corpus.
 
-The ``*_pro*`` filenames and the ``pro_israel_corpus`` collection name are
-retained from an earlier iteration of this project to avoid a data migration.
+The ``*_pro*`` data filenames are retained from an earlier iteration of this
+project to avoid a data migration; the rows they hold are refutations.
 
 Run order (each is a module, run from the repo root):
     uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
     uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
-    uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
+    uv run python -m rag.ingest_rag             # -> .chroma/ trope_refutation_corpus
 """

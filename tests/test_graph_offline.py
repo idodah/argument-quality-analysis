@@ -14,9 +14,9 @@ grounding pass is guaranteed by construction.
 
 Scenarios:
   1. happy_path_pro_after_first_refine: early gate proceeds, late stance returns
-     pro_israel after the mandatory refinement. One refine, one late stance call.
+     refutes_trope after the mandatory refinement. One refine, one late stance call.
   2. refinement_path_neutral_then_pro: early gate proceeds; late stance returns
-     neutral once, then pro_israel after another refinement.
+     neutral once, then refutes_trope after another refinement.
   3. gave_up_via_neutral: early gate proceeds; late stance always neutral;
      exhaust refine + regen budgets, give up.
   4. gave_up_via_off_topic_early_regen_then_late_giveup: raw survivor always
@@ -69,12 +69,12 @@ def _make_scenario(
     (`stance_check`, after refinement); the last element repeats.
     `early_stance_sequence` is consumed by the EARLY gate
     (`early_stance_check`, on the raw survivor before refinement); it defaults
-    to always 'pro_israel' so the early gate just proceeds and the late gate
+    to always 'refutes_trope' so the early gate just proceeds and the late gate
     drives the scenario. Set it to exercise the off-topic short-circuit.
     `retrieval_mode` controls what the router returns (web by default).
     """
     if early_stance_sequence is None:
-        early_stance_sequence = ["pro_israel"]
+        early_stance_sequence = ["refutes_trope"]
 
     def fake_generate_pair(topic, post, regen_reason=""):
         calls["generate"] += 1
@@ -185,7 +185,7 @@ def _run(
     try:
         graph = build_graph()
         return graph.invoke(
-            {"topic": "CMV: test", "original_post": "an anti-Israel post"},
+            {"topic": "CMV: test", "original_post": "a post advancing a trope"},
             config={"recursion_limit": 200},
         )
     finally:
@@ -194,11 +194,11 @@ def _run(
 
 
 def test_happy_path_pro_after_first_refine():
-    """Mandatory refinement pass runs, stance comes back pro_israel, exit."""
-    out = _run(["pro_israel"])
+    """Mandatory refinement pass runs, stance comes back refutes_trope, exit."""
+    out = _run(["refutes_trope"])
     assert out.get("winner") in ("A", "B")
-    assert out.get("stance") == "pro_israel"
-    assert out.get("pro_israel_reply") is True
+    assert out.get("stance") == "refutes_trope"
+    assert out.get("refutes_trope") is True
     assert out.get("gave_up", False) is False
     assert calls["generate"] == 1
     assert calls["rank"] == 1
@@ -210,9 +210,9 @@ def test_happy_path_pro_after_first_refine():
 
 
 def test_refinement_path_neutral_then_pro():
-    """First refinement -> neutral, second refinement -> pro_israel."""
-    out = _run(["neutral_needs_refine", "pro_israel"])
-    assert out.get("stance") == "pro_israel"
+    """First refinement -> neutral, second refinement -> refutes_trope."""
+    out = _run(["neutral_needs_refine", "refutes_trope"])
+    assert out.get("stance") == "refutes_trope"
     assert out.get("gave_up", False) is False
     assert calls["generate"] == 1
     assert calls["early_stance"] == 1  # one survivor (no regen), proceeds once
@@ -225,7 +225,7 @@ def test_gave_up_via_neutral_then_escalation():
     """Late stance always neutral: exhaust MAX_REFINE_ITERS, escalate to
     off-topic, exhaust MAX_LATE_REGEN_ITERS, give up.
 
-    The early gate proceeds (early sequence defaults to 'pro_israel'), so the
+    The early gate proceeds (early sequence defaults to 'refutes_trope'), so the
     early regen budget is untouched — this test exercises the LATE side only.
     """
     out = _run(["neutral_needs_refine"] * 100)
@@ -289,8 +289,8 @@ def test_early_stance_check_has_no_finalize_edge():
 def test_router_none_skips_retrieval():
     """Router picks 'none': routes straight to reflect, no retriever or grader is
     called, but reflect+refine still execute."""
-    out = _run(["pro_israel"], retrieval_mode="none")
-    assert out.get("stance") == "pro_israel"
+    out = _run(["refutes_trope"], retrieval_mode="none")
+    assert out.get("stance") == "refutes_trope"
     assert out.get("gave_up", False) is False
     # The 'none' arm bypasses retrieval and the docs grader entirely.
     assert calls["web_retrieve"] == 0
@@ -314,7 +314,7 @@ def test_no_finalize_without_grounding_pass():
     grounded=True without calling the grader). What matters is the topology:
     no path to finalize exists that bypasses refine.
     """
-    out = _run(["pro_israel"])
+    out = _run(["refutes_trope"])
     assert out.get("gave_up", False) is False
     assert calls["refine"] >= 1  # at least one refinement pass ran
 

@@ -3,7 +3,7 @@ Ingest the classified trope-refutation CMV arguments into the Chroma vector
 store used by agents.retrieval.LocalRetriever.
 
 Reads data/cmv_israel_rag_pro.parquet and adds one document per argument to the
-`pro_israel_corpus` collection at .chroma/ — the same collection retrieve_local
+`trope_refutation_corpus` collection at .chroma/ — the same collection retrieve_local
 queries, so no graph changes are needed.
 
 Each document's page_content is the argument text alone — so the embedding

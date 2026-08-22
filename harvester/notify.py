@@ -116,12 +116,12 @@ def _send_ntfy(text: str, click_url: str | None = None) -> None:
 
 
 def format_result(title: str, url: str, post_body: str, argument: str,
-                  grounded: bool, pro_israel: bool, sources: list[str] | None = None) -> str:
+                  grounded: bool, refutes_trope: bool, sources: list[str] | None = None) -> str:
     """Build the per-post message: original post + argument + a trailing sources
     list (the argument carries no inline citations; sources are separated out for
     human review).
 
-    `pro_israel` keeps its parameter name from the graph's state key; what it
+    `refutes_trope` keeps its parameter name from the graph's state key; what it
     now means is "the draft successfully refutes the trope" (see
     agents/prompts.py), which is how the warning below phrases it.
     """
@@ -131,7 +131,7 @@ def format_result(title: str, url: str, post_body: str, argument: str,
         # the record") cannot be positively supported by a retrieved chunk. See
         # the README's grader-limitation note before treating this as fabrication.
         flags.append("NOT grounded (may be a false alarm on negative claims)")
-    if not pro_israel:
+    if not refutes_trope:
         flags.append("does NOT clearly refute the trope")
     flag_line = f"\n[warnings: {', '.join(flags)}]" if flags else ""
     sources = sources or []

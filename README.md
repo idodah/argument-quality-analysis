@@ -156,7 +156,7 @@ Wikipedia, and ADL, covering every catalogued trope):
 
 ```bash
 uv run python -m rag.scrape_reference       # -> data/trope_reference.parquet
-uv run python -m rag.ingest_reference       # -> .chroma/ pro_israel_corpus
+uv run python -m rag.ingest_reference       # -> .chroma/ trope_refutation_corpus
 uv run python -m rag.scrape_reference --smoke   # 2 docs/source, writes nothing
 ```
 
@@ -199,7 +199,7 @@ API rather than scraped.
 ```bash
 uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
 uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
-uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
+uv run python -m rag.ingest_rag             # -> .chroma/ trope_refutation_corpus
 ```
 
 `classify_stance` sorts each argument into `refutation` / `trope` /
@@ -217,9 +217,9 @@ evidence store.
 > material the classifier is built to exclude. Treat this half as an optional
 > supplement; the reference corpus is what the system actually runs on.
 
-> The Chroma collection name (`pro_israel_corpus`) and the `*_pro*` data
-> filenames are retained from the project's earlier iteration to avoid a
-> disruptive data migration; the corpus they hold is trope refutations.
+> The `*_pro*` data filenames on the CMV half are retained from the project's
+> earlier iteration to avoid a disruptive rewrite; the rows they hold are
+> refutations.
 
 ## Baselines
 
@@ -294,13 +294,26 @@ patterns** that the wiring implements.
   edges straight to `reflect`, adding no new documents and preserving the
   existing pool, so refinement still runs and can cite previously-grounded facts
   without fetching fresh evidence.
-- **retrieve_local** — queries the Chroma `pro_israel_corpus` (both halves:
+- **retrieve_local** — queries the Chroma `trope_refutation_corpus` (both halves:
   reference articles and delta-awarded CMV comments) using the topic + post as
   the query. Deliberately unfiltered by `source` — filtering to one source value
   would hide the reference corpus and leave `hallucination_check` with nothing
   local to verify against.
 - **retrieve_web** — runs the router's planned queries through Tavily,
-  restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
+  restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`): Holocaust
+  museums and research institutes (USHMM, Yad Vashem, IHRA), antisemitism
+  monitors (ADL, JPR, Kantor Center), mainstream fact-checkers (AFP, Reuters,
+  AP, Snopes, PolitiFact, Full Fact), and general reference (Wikipedia,
+  Britannica, JSTOR).
+
+  > This list previously held Israeli-government and pro-Israel advocacy domains
+  > (`mfa.gov.il`, `idf.il`, CAMERA, HonestReporting, JCPA), which suited the
+  > project's earlier target but is wrong for trope refutation on two counts: it
+  > blocks the best evidence — a blood-libel or Khazar-myth debunking lives in
+  > historical scholarship, not a foreign-ministry release — and it makes the
+  > evidence base implicitly political, which is the conflation the classifiers
+  > exist to avoid. Widen the list deliberately rather than emptying it: on these
+  > topics, denialist sites rank well in open search.
 - **grade_docs** — CRAG per-chunk relevance grading. Keeps the relevant
   subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
   and `web_search=True` routes to the web-search fallback first.
@@ -315,18 +328,15 @@ patterns** that the wiring implements.
   and/or a stance reason from `stance_check`), attaching inline citations
   to evidence-backed claims.
 - **hallucination_check** — Self-RAG binary groundedness check.
-- **stance_check** — classifies the refined draft as `pro_israel` (→ finalize),
+- **stance_check** — classifies the refined draft as `refutes_trope` (→ finalize),
   `neutral_needs_refine` (→ router, refinement loop), or `off_topic_or_anti`
   (→ generate_initial, regeneration loop). It records a `regen_reason` the next
   pass must fix, and sets `gave_up=True` (→ finalize) when both the refinement
   and regeneration budgets are exhausted.
 
-  > **Label naming:** the three verdict strings (and the `pro_israel_reply` state
-  > key) are retained from the project's earlier iteration and are load-bearing
-  > across the graph's state schema, nodes, and tests. Read them by their current
-  > criteria: `pro_israel` = *successfully refutes the trope*,
-  > `off_topic_or_anti` = *off-topic, attacks the poster, or drifts into
-  > political advocacy*. The criteria live in `agents/prompts.py`.
+  > `refutes_trope` means the draft lands a substantive refutation;
+  > `off_topic_or_anti` means it is off-topic, attacks the poster, or drifts
+  > into political advocacy. The criteria live in `agents/prompts.py`.
 - **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
   grounded / refutation-quality / gave-up warnings (and whether grounding was verified),
   and prints the run's trajectory.

@@ -2,9 +2,9 @@
 Retrieval backends for the Adaptive-RAG step.
 
 Two arms:
-  - local: Chroma vector store (`pro_israel_corpus` — name retained from an
-    earlier iteration; it holds trope refutations), the delta-awarded
-    CMV-Israel arguments ingested by the `rag/` pipeline (`rag.ingest_rag`).
+  - local: Chroma vector store (`trope_refutation_corpus`) — authoritative
+    trope-refutation articles plus delta-awarded CMV comments, ingested by the
+    `rag/` pipeline (`rag.ingest_reference` / `rag.ingest_rag`).
   - web:   Tavily search. Requires TAVILY_API_KEY in the environment.
 
 Both retrievers expose the same interface: `.retrieve(query, k) -> list[str]`.
@@ -18,7 +18,7 @@ from pathlib import Path
 # Chroma opens its SQLite store read-WRITE even for queries (lock/WAL files), so
 # the corpus dir must be writable.
 CHROMA_DIR = Path(os.environ.get("CHROMA_DIR") or (Path(__file__).resolve().parent.parent / ".chroma"))
-COLLECTION_NAME = "pro_israel_corpus"
+COLLECTION_NAME = "trope_refutation_corpus"
 
 
 def doc_count(store) -> int:
@@ -33,7 +33,7 @@ def doc_count(store) -> int:
 
 class LocalRetriever:
     """Chroma-backed local corpus. Returns empty results until the `rag/`
-    ingestion scripts have populated the `pro_israel_corpus` collection."""
+    ingestion scripts have populated the `trope_refutation_corpus` collection."""
 
     def __init__(self, k: int = 4):
         from langchain_chroma import Chroma
@@ -48,7 +48,7 @@ class LocalRetriever:
         )
         if doc_count(self.store) == 0:
             print(
-                "[LocalRetriever] pro_israel_corpus is empty; local arm will return "
+                "[LocalRetriever] trope_refutation_corpus is empty; local arm will return "
                 "no results. Populate it with `uv run python -m rag.ingest_rag`."
             )
 

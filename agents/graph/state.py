@@ -10,10 +10,10 @@ from typing import Literal, TypedDict
 # these names but don't re-explain the budgets; edit them here.
 #
 #   1. EARLY regen  (early_stance_check -> generate_initial): the cheap pre-
-#      refinement gate regenerates an off-topic/anti-Israel raw draft, up to
+#      refinement gate regenerates an off-topic/drifting raw draft, up to
 #      MAX_EARLY_REGEN_ITERS times PER GENERATION.
 #   2. REFINEMENT   (stance_check -> router): re-refine an on-topic draft that
-#      isn't pro-Israel yet, up to MAX_REFINE_ITERS passes per generation.
+#      isn't a substantive refutation yet, up to MAX_REFINE_ITERS passes per generation.
 #   3. LATE regen   (stance_check -> generate_initial): full restart, up to
 #      MAX_LATE_REGEN_ITERS times for the whole run.
 #   4. GROUNDING    (hallucination_check -> refine): re-refine an ungrounded
@@ -35,47 +35,59 @@ WEB_QUERIES = 3  # how many search queries the web planner writes per pass
 
 # Tavily web-search allow-list. Empty list disables filtering.
 #
-# DELIBERATELY pro-Israel only. The pipeline is gated by a strict no-concession
-# stance check. When the web arm pulled from critical-leaning outlets, otherwise
-# grounded drafts kept importing those sources' fault-framing of Israeli conduct,
-# failing the stance gate and exhausting both budgets — the run gave up on every
-# post. Restricting retrieval to pro-Israel, Israeli-official, and Jewish-advocacy
-# sources lets the evidence path produce grounded, cited drafts that pass the gate.
+# Scoped to sources that document and debunk antisemitic tropes: Holocaust
+# museums and research institutes, antisemitism-monitoring bodies, mainstream
+# fact-checkers, and general reference/academic publishers. These are the
+# sources that can actually settle the factual questions this pipeline argues
+# about (when a myth started, who forged what, what the genetic or archival
+# record shows), and they are what `hallucination_check` verifies citations
+# against.
 #
-# Trade-off: evidence is one-sided by design and citations point to advocacy
-# outlets. That's appropriate here (the goal is a pro-Israel argument, not a
-# neutral brief), but a human reviewer should keep it in mind. To rebalance,
-# add neutral primary/reference or critical outlets to the list below.
+# HISTORY / why this list changed: it previously held Israeli-government and
+# pro-Israel advocacy domains (mfa.gov.il, idf.il, knesset.gov.il, CAMERA,
+# HonestReporting, JCPA, FDD, MEF). That served the project's earlier target —
+# defending Israeli policy — but is wrong for trope refutation on two counts.
+# It blocks the best evidence (a blood-libel or Khazar-myth debunking lives in
+# historical scholarship, not in a foreign-ministry release), and it makes the
+# evidence base implicitly political: a system that refutes antisemitism by
+# citing the IDF is making a political argument through its sourcing, which is
+# exactly the conflation the classifiers are built to avoid. See
+# `harvester/classify.py` for the same boundary stated as a rule.
+#
+# Trade-off: this is a curated list, so genuinely relevant material on other
+# domains is unreachable. Widen it deliberately rather than emptying it —
+# on these topics, bad-faith and denialist sites rank well in open search.
 
 WEB_ALLOWED_DOMAINS = [
-    # Pro-Israel / Israel-advocacy think tanks & research
-    "jcpa.org",            # Jerusalem Center for Public Affairs
-    "fdd.org",             # Foundation for Defense of Democracies
-    "washingtoninstitute.org",  # Washington Institute for Near East Policy (WINEP)
-    "meforum.org",         # Middle East Forum
-    "adl.org",             # Anti-Defamation League
-    "ajc.org",             # American Jewish Committee
-    # Media-accuracy watchdogs (pro-Israel)
-    "camera.org",
-    "honestreporting.com",
-    # Jewish-affairs press & syndication
-    "tabletmag.com",       # Jewish-affairs magazine
-    "jns.org",             # Jewish News Syndicate
-    # Israel-region press (English) — Israeli-perspective reporting
-    "timesofisrael.com",
-    "jpost.com",
-    # Primary-source archive & Israeli official / legal / history channels
-    "jewishvirtuallibrary.org",  # primary-source archive (AICE)
-    "mfa.gov.il",          # Israeli Ministry of Foreign Affairs
-    "gov.il",              # Israeli government
-    "idf.il",              # Israel Defense Forces official
-    "knesset.gov.il",      # Israeli parliament (laws, records)
-    "jewishagency.org",    # Jewish Agency (aliyah/history)
+    # Holocaust museums, archives & research institutes
+    "ushmm.org",                  # US Holocaust Memorial Museum
+    "encyclopedia.ushmm.org",
+    "yadvashem.org",              # Yad Vashem
+    "holocaustremembrance.com",   # IHRA
+    "wienerholocaustlibrary.org",
+    "auschwitz.org",              # Auschwitz-Birkenau State Museum
+    # Antisemitism research & monitoring
+    "adl.org",                    # Anti-Defamation League
+    "antisemitism.org.il",
+    "jpr.org.uk",                 # Institute for Jewish Policy Research
+    "kantorcenter.tau.ac.il",     # Kantor Center, TAU
+    # Fact-checking
+    "factcheck.afp.com",
+    "reuters.com",
+    "apnews.com",
+    "snopes.com",
+    "politifact.com",
+    "fullfact.org",
+    # General reference & academic
+    "en.wikipedia.org",
+    "britannica.com",
+    "jstor.org",
+    "scholar.google.com",
 ]
 
 Side = Literal["A", "B"]
 RetrievalMode = Literal["local", "web", "none"]
-Stance = Literal["pro_israel", "neutral_needs_refine", "off_topic_or_anti"]
+Stance = Literal["refutes_trope", "neutral_needs_refine", "off_topic_or_anti"]
 
 
 class GraphState(TypedDict, total=False):
@@ -149,13 +161,13 @@ class GraphState(TypedDict, total=False):
 
     history: list[dict]
     # Ternary stance + the legacy boolean (kept for tests / external consumers
-    # that read pro_israel_reply directly). pro_israel_reply is just
-    # `stance == "pro_israel"`.
+    # that read refutes_trope directly). refutes_trope is just
+    # `stance == "refutes_trope"`.
     stance: Stance
-    pro_israel_reply: bool
+    refutes_trope: bool
     stance_reason: str
     # Set when both budgets are exhausted and the pipeline gives up rather than
-    # ship a non-pro-Israel argument as if it were one.
+    # ship a non-refutation as if it were one.
     gave_up: bool
     give_up_reason: str
     final_scores: dict

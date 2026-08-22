@@ -11,7 +11,7 @@ Package layout
 
 First-level modules:
 
-  - ``generate.py``   — Single-call entrypoint (``generate_pro_israel_response``)
+  - ``generate.py``   — Single-call entrypoint (``generate_refutation``)
                         that runs the full graph on one CMV post and returns a
                         flat result dict. Shared by the CLI, web app, and
                         harvester so every caller runs identical logic.

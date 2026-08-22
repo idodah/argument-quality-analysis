@@ -39,7 +39,7 @@ from harvester import tracking
 from harvester.classify import _neutralize, classify_antisemitic_trope, keyword_match
 from harvester.fediverse import PLATFORMS, get_platform
 
-from harvester.core import generate_pro_israel_response
+from harvester.core import generate_refutation
 
 DEFAULT_QUERY = "rothschild jews control holohoax khazar great replacement"
 
@@ -68,7 +68,7 @@ def _handle(thread, *, dry_run: bool, do_notify: bool) -> str:
 
     safe_topic = _neutralize(topic)
     safe_body = _UNTRUSTED_PREAMBLE + _neutralize(body)
-    result = generate_pro_israel_response(safe_topic, safe_body)
+    result = generate_refutation(safe_topic, safe_body)
     post = thread.post
     result.update(id=post.canonical_id, title=post.title, url=post.url,
                   original_post=body, platform=post.platform)
@@ -76,13 +76,13 @@ def _handle(thread, *, dry_run: bool, do_notify: bool) -> str:
     flagged = (
         bool(result.get("gave_up"))
         or not bool(result.get("grounded", True))
-        or not bool(result.get("pro_israel_reply", True))
+        or not bool(result.get("refutes_trope", True))
     )
 
     if do_notify:
         summary = notify_mod.format_result(
             f"[{post.platform}] {post.title}", post.url, body, result["generation"],
-            result["grounded"], result["pro_israel_reply"], result.get("sources"))
+            result["grounded"], result["refutes_trope"], result.get("sources"))
         try:
             notify_mod.send(("[!] " if flagged else "") + summary, click_url=post.url)
         except RuntimeError as e:

@@ -22,8 +22,8 @@ def finalize(state: GraphState) -> GraphState:
     # assumed (local/none retrieval had no factual evidence to check against).
     grounding_verified = state.get("grounding_verified", False)
     issues = state.get("hallucination_issues", [])
-    pro_israel = state.get("pro_israel_reply", True)
-    stance = state.get("stance", "pro_israel")
+    refutes_trope = state.get("refutes_trope", True)
+    stance = state.get("stance", "refutes_trope")
     gave_up = state.get("gave_up", False)
     give_up_reason = state.get("give_up_reason", "")
 
@@ -35,8 +35,8 @@ def finalize(state: GraphState) -> GraphState:
         print(f"[finalize] WARNING: winning argument is NOT grounded — {len(issues)} unresolved issue(s):")
         for i, it in enumerate(issues, 1):
             print(f"  [issue {i}] {it}")
-    if not pro_israel and not gave_up:
-        print(f"[finalize] WARNING: winning argument is NOT a pro-Israel reply — {state.get('stance_reason', '')}")
+    if not refutes_trope and not gave_up:
+        print(f"[finalize] WARNING: winning argument does NOT clearly refute the trope — {state.get('stance_reason', '')}")
 
     _print_score_trajectory(state.get("history", []))
     return {
@@ -44,7 +44,7 @@ def finalize(state: GraphState) -> GraphState:
         "generation": clean_arg,
         "generation_raw": final_argument,
         "sources": sources,
-        "pro_israel_reply": pro_israel,
+        "refutes_trope": refutes_trope,
         "stance": stance,
         "gave_up": gave_up,
         "give_up_reason": give_up_reason,
@@ -56,7 +56,7 @@ def finalize(state: GraphState) -> GraphState:
             # "grounded" above can mean verified OR assumed; this disambiguates.
             "grounding_verified": grounding_verified,
             "hallucination_issues": issues,
-            "pro_israel_reply": pro_israel,
+            "refutes_trope": refutes_trope,
             "stance": stance,
             "stance_reason": state.get("stance_reason", ""),
             "gave_up": gave_up,

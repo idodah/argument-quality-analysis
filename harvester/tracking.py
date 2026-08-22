@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS responses (
     generation      TEXT NOT NULL,            -- the generated rebuttal
     sources         TEXT,                     -- JSON array of source urls
     grounded        INTEGER NOT NULL,         -- 0/1
-    pro_israel      INTEGER NOT NULL,         -- 0/1
+    refutes_trope      INTEGER NOT NULL,         -- 0/1
     stance          TEXT,
     gave_up         INTEGER NOT NULL DEFAULT 0,
     created_at      REAL NOT NULL             -- epoch seconds
@@ -69,10 +69,26 @@ def _db_path() -> Path:
     return Path(os.environ.get("HARVESTER_DB") or "harvester_tracking.db")
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring a pre-existing DB up to the current column names.
+
+    The `pro_israel` column was renamed to `refutes_trope` when the pipeline was
+    retargeted from pro-Israel advocacy to trope refutation. `CREATE TABLE IF
+    NOT EXISTS` does not alter an existing table, so a DB written before the
+    rename keeps the old column and every read fails on the new name. Rename it
+    in place, preserving the stored rows.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(responses)")}
+    if "pro_israel" in cols and "refutes_trope" not in cols:
+        conn.execute("ALTER TABLE responses RENAME COLUMN pro_israel TO refutes_trope")
+        conn.commit()
+
+
 def _connect(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path or _db_path()))
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -88,7 +104,7 @@ def _row_from_result(result: dict) -> dict:
         "generation": result.get("generation") or "",
         "sources": result.get("sources") or [],
         "grounded": bool(result.get("grounded", True)),
-        "pro_israel": bool(result.get("pro_israel_reply", True)),
+        "refutes_trope": bool(result.get("refutes_trope", True)),
         "stance": result.get("stance") or "",
         "gave_up": bool(result.get("gave_up", False)),
         "created_at": time.time(),
@@ -102,12 +118,12 @@ def _sqlite_record(result: dict, db_path: Path | None = None) -> bool:
         conn.execute(
             """INSERT INTO responses
                (id, title, topic, url, original_post, generation, sources,
-                grounded, pro_israel, stance, gave_up, created_at)
+                grounded, refutes_trope, stance, gave_up, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 r["id"], r["title"], r["topic"], r["url"], r["original_post"],
                 r["generation"], json.dumps(r["sources"]),
-                int(r["grounded"]), int(r["pro_israel"]), r["stance"],
+                int(r["grounded"]), int(r["refutes_trope"]), r["stance"],
                 int(r["gave_up"]), r["created_at"],
             ),
         )
@@ -167,7 +183,7 @@ def _ddb_record(result: dict) -> bool:
         "id": r["id"], "title": r["title"], "topic": r["topic"], "url": r["url"],
         "original_post": r["original_post"], "generation": r["generation"],
         "sources": json.dumps(r["sources"]),
-        "grounded": r["grounded"], "pro_israel": r["pro_israel"],
+        "grounded": r["grounded"], "refutes_trope": r["refutes_trope"],
         "stance": r["stance"], "gave_up": r["gave_up"],
         "created_at": int(r["created_at"]),
     }
