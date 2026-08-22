@@ -223,3 +223,36 @@ def test_grounding_skipped_when_local_returned_nothing():
     out, grader = _run_hallucination_check("local", [])
     assert not grader.called
     assert out["grounding_verified"] is False
+
+
+# --------------------------------------------------------------------------- #
+# prompts: the length cap must be stated consistently
+# --------------------------------------------------------------------------- #
+# The output length is set purely by prompt text, in three places that have to
+# agree: the initial generator writes the drafts, the refiner rewrites them, and
+# reflect decides how much new material to demand. If one drifts, the nodes
+# fight each other — reflect asking for more than the cap holds is how a
+# refinement loop burns passes without converging.
+
+def test_initial_generator_asks_for_one_or_two_paragraphs():
+    from agents import prompts
+    assert "one or two paragraphs" in prompts.INITIAL_GEN_USER.lower()
+
+
+def test_refiner_states_the_cap_as_hard_and_outranking():
+    from agents import prompts
+    system = prompts.REFINE_SYSTEM.lower()
+    assert "one or two paragraphs" in system
+    # The cap has to beat the critique, or "ADD the Missing bullets" wins.
+    assert "outranks" in system
+
+
+def test_reflect_is_aware_of_the_same_cap():
+    from agents import prompts
+    assert "one or two paragraphs" in prompts.REFLECT_SYSTEM.lower()
+
+
+def test_no_prompt_still_asks_for_the_old_longer_range():
+    from agents import prompts
+    for name in ("INITIAL_GEN_USER", "REFINE_SYSTEM", "REFLECT_SYSTEM"):
+        assert "3-6 paragraph" not in getattr(prompts, name).lower(), name

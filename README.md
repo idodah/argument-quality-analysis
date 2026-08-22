@@ -281,7 +281,18 @@ patterns** that the wiring implements.
 ### Graph nodes
 
 - **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
-  `arg_b`) from the topic and original post.
+  `arg_b`) from the topic and original post, in plain prose.
+
+  > **Output length is capped at one or two paragraphs**, and that cap is set in
+  > three prompts that must agree (`agents/prompts.py`): `INITIAL_GEN_USER`
+  > writes to it, `REFINE_SYSTEM` states it as a hard limit that *outranks the
+  > critique*, and `REFLECT_SYSTEM` is told the budget so it critiques as an
+  > editor rather than demanding more material than two paragraphs can hold.
+  > Changing the cap in only one of them makes the nodes fight each other: the
+  > refiner is instructed to ADD every "Missing" bullet, so an unaware reflect
+  > will keep pushing the draft over the limit and burn refinement passes
+  > without converging. Measured output after the change: 2 paragraphs /
+  > ~250 words on both a Rothschild-conspiracy and a Holocaust-denial post.
 - **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
   initial drafts and keeps the winner as `argument`; only that survivor
   iterates from here (the loser is dropped).
