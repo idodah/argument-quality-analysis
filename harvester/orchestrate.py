@@ -231,9 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.dry_run and not args.no_notify and not notify_mod.configured():
-        print("[orchestrate] ERROR: no notifier configured. Set TELEGRAM_BOT_TOKEN "
-              "+ TELEGRAM_CHAT_ID (recommended — long arguments arrive whole) or "
-              "NTFY_TOPIC in your .env, or pass --no-notify / --dry-run.",
+        print("[orchestrate] ERROR: notifier not configured. Set TELEGRAM_BOT_TOKEN "
+              "and TELEGRAM_CHAT_ID in your .env, or pass --no-notify / --dry-run.",
               file=sys.stderr)
         return 2
 

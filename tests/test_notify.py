@@ -1,9 +1,9 @@
 """Offline tests for the notifier backends.
 
-The bug these guard against is the one that motivated the Telegram backend: a
-long argument being silently cut. ntfy caps a notification body at 4096 bytes,
-so the ntfy path splits into several independent pushes; Telegram instead sends
-anything over its limit as a single .md document, so the text arrives whole.
+The bug these guard against is the one that motivated moving to Telegram: a
+long argument being silently cut. The previous ntfy backend capped a
+notification at 4096 bytes and split past it; Telegram instead sends anything
+over its limit as a single .md document, so the text arrives whole.
 
 No network: `requests.post` is stubbed and the calls are inspected.
 """
@@ -26,8 +26,6 @@ from harvester import notify, notify_telegram
 def tg_env(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
-    monkeypatch.delenv("NOTIFY_BACKEND", raising=False)
-    monkeypatch.delenv("NTFY_TOPIC", raising=False)
 
 
 def _ok_response():
@@ -115,45 +113,40 @@ def test_missing_credentials_raises_with_setup_help(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Backend selection
+# notify.py re-exports the telegram transport
 # --------------------------------------------------------------------------- #
-def test_telegram_preferred_when_both_configured(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:a")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "2")
-    monkeypatch.setenv("NTFY_TOPIC", "t")
-    monkeypatch.delenv("NOTIFY_BACKEND", raising=False)
-    assert notify.active_backend() == "telegram"
+def test_notify_send_is_the_telegram_send(monkeypatch):
+    # notify.py owns the message shape and re-exports the transport; there is
+    # no dispatch layer any more, so these must be the same function.
+    assert notify.send is notify_telegram.send
+    assert notify.configured is notify_telegram.configured
 
 
-def test_explicit_backend_env_wins(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:a")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "2")
-    monkeypatch.setenv("NTFY_TOPIC", "t")
-    monkeypatch.setenv("NOTIFY_BACKEND", "ntfy")
-    assert notify.active_backend() == "ntfy"
-
-
-def test_falls_back_to_ntfy_when_only_it_is_configured(monkeypatch):
+def test_configured_is_false_without_credentials(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    monkeypatch.delenv("NOTIFY_BACKEND", raising=False)
-    monkeypatch.setenv("NTFY_TOPIC", "t")
-    assert notify.active_backend() == "ntfy"
-
-
-def test_no_backend_configured(monkeypatch):
-    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NTFY_TOPIC", "NOTIFY_BACKEND"):
-        monkeypatch.delenv(k, raising=False)
-    assert notify.active_backend() is None
     assert notify.configured() is False
-    with pytest.raises(RuntimeError, match="No notifier configured"):
-        notify.send("hi")
 
 
-def test_send_routes_to_telegram(monkeypatch):
+def test_configured_is_true_with_credentials(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:a")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "2")
-    monkeypatch.delenv("NOTIFY_BACKEND", raising=False)
-    with mock.patch.object(notify_telegram, "send") as tg:
-        notify.send("hi", click_url="https://x.com")
-    tg.assert_called_once_with("hi", click_url="https://x.com")
+    assert notify.configured() is True
+
+
+def test_partial_credentials_are_not_configured(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:a")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    assert notify.configured() is False
+
+
+def test_no_ntfy_env_is_read_anywhere():
+    """Regression: no NTFY_* env var may be read, i.e. no second delivery path.
+
+    Checks the uppercase env-var prefix specifically. Lowercase "ntfy" still
+    appears in `notify.py`'s docstring, which explains why the backend was
+    removed — that prose is deliberate and must not trip this guard.
+    """
+    import inspect
+    for mod in (notify, notify_telegram):
+        assert "NTFY" not in inspect.getsource(mod), mod.__name__

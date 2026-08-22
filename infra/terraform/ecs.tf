@@ -123,7 +123,7 @@ data "aws_iam_policy_document" "task" {
     ]
   }
 
-  # Read the runtime secrets (Tavily / ntfy / OpenAI) directly too, so the code
+  # Read the runtime secrets (Tavily / Telegram / OpenAI) directly too, so the code
   # can fetch them by name if not injected as env.
   statement {
     sid       = "ReadSecrets"
@@ -158,7 +158,6 @@ locals {
     { name = "BEDROCK_MODEL_ID", value = var.bedrock_model_id },
     { name = "DDB_SEEN_TABLE", value = aws_dynamodb_table.seen.name },
     { name = "DDB_RESPONSES_TABLE", value = aws_dynamodb_table.responses.name },
-    { name = "NOTIFY_BACKEND", value = var.notify_backend },
   ], local.ranker_env)
 
   # Secrets injected as env from Secrets Manager (resolved by the execution role).
@@ -166,10 +165,6 @@ locals {
   container_secrets = concat(
     [
       { name = "TAVILY_API_KEY", valueFrom = aws_secretsmanager_secret.this["tavily"].arn },
-      { name = "NTFY_TOPIC", valueFrom = "${aws_secretsmanager_secret.this["ntfy"].arn}:topic::" },
-      { name = "NTFY_TOKEN", valueFrom = "${aws_secretsmanager_secret.this["ntfy"].arn}:token::" },
-      # Telegram is preferred for long arguments: ntfy caps a notification at
-      # 4096 bytes and splits past it, cutting mid-sentence.
       { name = "TELEGRAM_BOT_TOKEN", valueFrom = "${aws_secretsmanager_secret.this["telegram"].arn}:bot_token::" },
       { name = "TELEGRAM_CHAT_ID", valueFrom = "${aws_secretsmanager_secret.this["telegram"].arn}:chat_id::" },
     ],

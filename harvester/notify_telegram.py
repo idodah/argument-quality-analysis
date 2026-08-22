@@ -1,12 +1,10 @@
 """Telegram notifier backend: send one message per generated response.
 
-Chosen over ntfy for long arguments. ntfy.sh caps a notification body at 4096
-bytes and the previous code worked around that by splitting a message into
-several independent pushes, which arrive unordered and cut mid-sentence.
-Telegram handles the long case properly: messages up to 4096 characters go out
+Handles the long-argument case properly: messages up to 4096 characters go out
 as text, and anything longer is sent as a .md document (bots may upload up to
-50 MB), so a long argument arrives whole, in one notification, and stays
-readable in the chat history rather than expiring.
+50 MB), so a long refutation arrives whole, in one notification, and stays
+readable in the chat history rather than expiring. It also delivers only to the
+chat id you configure.
 
 Setup:
   1. Talk to @BotFather, `/newbot`, copy the token.
@@ -16,8 +14,6 @@ Setup:
          TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
          TELEGRAM_CHAT_ID=987654321
 
-Unlike ntfy.sh (a public relay serving attachments at guessable URLs), a bot
-delivers only to the chat id you configure.
 """
 
 from __future__ import annotations

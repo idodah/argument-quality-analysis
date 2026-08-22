@@ -108,20 +108,3 @@ variable "create_openai_secret" {
   type        = bool
   default     = true
 }
-
-variable "notify_backend" {
-  type        = string
-  default     = "telegram"
-  description = <<-EOT
-    Which notifier the task uses: "telegram" (recommended — long arguments are
-    delivered whole, as a .md document past 4096 chars) or "ntfy" (splits long
-    output across several truncated pushes). Empty string lets the code pick
-    whichever backend has credentials populated. Populate the matching secret
-    container out of band before switching.
-  EOT
-
-  validation {
-    condition     = contains(["telegram", "ntfy", ""], var.notify_backend)
-    error_message = "notify_backend must be \"telegram\", \"ntfy\", or \"\"."
-  }
-}

@@ -133,94 +133,6 @@ train on.
 uv run python -m preprocessing.filter_by_tokens
 ```
 
-### The retrieval corpus
-
-The `rag/` package builds the evidence corpus the agent grounds its rebuttals
-in. It has **two halves**, which play different roles and are tagged in Chroma
-metadata by `source_type` so retrieval can tell them apart:
-
-| half | `source_type` | what it is | why |
-| --- | --- | --- | --- |
-| **Reference** | `reference` | Articles from the USHMM Holocaust Encyclopedia and Wikipedia that document each trope — its origin, who propagated it, and the evidence against it. | Authoritative and **citable**. This is what `hallucination_check` grades a draft's factual claims against. |
-| **CMV** | `cmv_delta` | Delta-awarded r/changemyview comments. | Persuasive form — arguments that demonstrably moved a human. **Not** a factual source. |
-
-The distinction matters and is enforced in
-`agents.retrieval.LocalRetriever._format`: reference chunks are emitted with a
-`[url]` line (making them legitimate citation targets for `refine`), while CMV
-chunks are labelled as delta-awarded arguments with no URL. Mislabeling a Reddit
-comment as an authoritative source would invite the generator to cite it as
-evidence.
-
-**Reference half** (the backbone — 30 articles → 744 chunks from USHMM,
-Wikipedia, and ADL, covering every catalogued trope):
-
-```bash
-uv run python -m rag.scrape_reference       # -> data/trope_reference.parquet
-uv run python -m rag.ingest_reference       # -> .chroma/ trope_refutation_corpus
-uv run python -m rag.scrape_reference --smoke   # 2 docs/source, writes nothing
-```
-
-Article titles and slugs are a hand-curated catalogue in
-`rag/scrape_reference.py`, each verified to resolve and return substantive prose.
-Access was checked before use: USHMM's and ADL's `robots.txt` both permit the
-paths used (only `/search` and `/resources/search/research-analysis`
-respectively are disallowed), and Wikipedia is read through its public action
-API rather than scraped.
-
-> **Retrieval hazard worth knowing about.** Any article *about* a myth must
-> quote the myth, so the corpus necessarily contains trope text — and embedding
-> search preferentially matches it, because a conspiracy-shaped query looks like
-> conspiracy-shaped prose. Querying the Rothschild banking myth, for example,
-> ranks 19th-century quotations that read as pro-conspiracy out of context above
-> the article's own debunking. Two things mitigate this: the CRAG `grade_docs`
-> node drops chunks it judges irrelevant (typically 1–2 of 4 on such queries),
-> and the catalogue deliberately pairs each descriptive article with a
-> refutation-focused one. Curating a purely descriptive article (e.g.
-> "Rothschild family" alone, with no debunking source alongside it) leaves
-> `hallucination_check` nothing to verify a refutation against — it flagged
-> exactly that gap during development, which is why the ADL and conspiracy-theory
-> entries were added.
-
-> **Known limitation: `grounded=False` over-fires on refutations.** A refutation
-> is largely made of *negative* claims ("owning every central bank is not
-> supported by the documented record"), and a negative cannot be positively
-> supported by any retrieved chunk. `HALLUCINATION_GRADER_SYSTEM` tells the
-> grader not to flag framing or opinion, but says nothing about negative
-> existence claims, so it flags them as ungrounded. In practice this means a
-> correct, well-sourced refutation can finish with `grounded=False` and a
-> warning listing sentences that are actually its strongest lines. Read the flag
-> as "contains unverifiable-shaped assertions", not "contains fabrications", and
-> check the listed issues before believing it. Fixing this properly means
-> teaching the grader to treat "the evidence does not support X" as grounded
-> when no chunk asserts X — a prompt change to the grader, not a graph change.
-
-**CMV half** (a supplement):
-
-```bash
-uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
-uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
-uv run python -m rag.ingest_rag             # -> .chroma/ trope_refutation_corpus
-```
-
-`classify_stance` sorts each argument into `refutation` / `trope` /
-`political_argument` / `neutral` / `mixed` and keeps only high-confidence
-`refutation` rows; `political_argument` exists as its own class specifically so
-criticism of the Israeli government is identified and kept **out** of the
-evidence store.
-
-> **Yield warning.** CMV is a poor source for this domain, and the numbers say so:
-> a survey of trope-keyword threads found ~0.25 delta comments per thread, and
-> most matched threads debate the *legal* question (should denial be criminalized)
-> rather than the factual one — a delta-winning comment there argues the First
-> Amendment, not whether the Holocaust happened. Worse, keyword searches for
-> `antisemitism` and `jews` return mostly Israel-politics threads, i.e. exactly the
-> material the classifier is built to exclude. Treat this half as an optional
-> supplement; the reference corpus is what the system actually runs on.
-
-> The `*_pro*` data filenames on the CMV half are retained from the project's
-> earlier iteration to avoid a disruptive rewrite; the rows they hold are
-> refutations.
-
 ## Baselines
 
 Simple bag-of-words baselines: TF-IDF features into Logistic Regression /
@@ -282,17 +194,6 @@ patterns** that the wiring implements.
 
 - **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
   `arg_b`) from the topic and original post, in plain prose.
-
-  > **Output length is capped at one or two paragraphs**, and that cap is set in
-  > three prompts that must agree (`agents/prompts.py`): `INITIAL_GEN_USER`
-  > writes to it, `REFINE_SYSTEM` states it as a hard limit that *outranks the
-  > critique*, and `REFLECT_SYSTEM` is told the budget so it critiques as an
-  > editor rather than demanding more material than two paragraphs can hold.
-  > Changing the cap in only one of them makes the nodes fight each other: the
-  > refiner is instructed to ADD every "Missing" bullet, so an unaware reflect
-  > will keep pushing the draft over the limit and burn refinement passes
-  > without converging. Measured output after the change: 2 paragraphs /
-  > ~250 words on both a Rothschild-conspiracy and a Holocaust-denial post.
 - **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
   initial drafts and keeps the winner as `argument`; only that survivor
   iterates from here (the loser is dropped).
@@ -316,15 +217,6 @@ patterns** that the wiring implements.
   monitors (ADL, JPR, Kantor Center), mainstream fact-checkers (AFP, Reuters,
   AP, Snopes, PolitiFact, Full Fact), and general reference (Wikipedia,
   Britannica, JSTOR).
-
-  > This list previously held Israeli-government and pro-Israel advocacy domains
-  > (`mfa.gov.il`, `idf.il`, CAMERA, HonestReporting, JCPA), which suited the
-  > project's earlier target but is wrong for trope refutation on two counts: it
-  > blocks the best evidence — a blood-libel or Khazar-myth debunking lives in
-  > historical scholarship, not a foreign-ministry release — and it makes the
-  > evidence base implicitly political, which is the conflation the classifiers
-  > exist to avoid. Widen the list deliberately rather than emptying it: on these
-  > topics, denialist sites rank well in open search.
 - **grade_docs** — CRAG per-chunk relevance grading. Keeps the relevant
   subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
   and `web_search=True` routes to the web-search fallback first.
@@ -344,10 +236,6 @@ patterns** that the wiring implements.
   (→ generate_initial, regeneration loop). It records a `regen_reason` the next
   pass must fix, and sets `gave_up=True` (→ finalize) when both the refinement
   and regeneration budgets are exhausted.
-
-  > `refutes_trope` means the draft lands a substantive refutation;
-  > `off_topic_or_anti` means it is off-topic, attacks the poster, or drifts
-  > into political advocacy. The criteria live in `agents/prompts.py`.
 - **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
   grounded / refutation-quality / gave-up warnings (and whether grounding was verified),
   and prints the run's trajectory.
@@ -407,7 +295,7 @@ The `harvester/` package applies the agent workflow to live data: it searches
 three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
 advancing an antisemitic trope, drafts a factual refutation
 with the same `agents.generate` entrypoint, and pushes it to the operator
-via Telegram (or ntfy). It is **read + draft + notify only** — it never posts back; a human
+via Telegram. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
 
 Detection is deliberately conservative: a cheap keyword prefilter (trope
@@ -440,13 +328,12 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
 ```
 
-**Notifier setup.** Two backends; pick one with `NOTIFY_BACKEND=telegram|ntfy`,
-or leave it unset and whichever is configured wins (Telegram first).
+**Notifier setup.** Notifications go to **Telegram** — the only backend, and
+the only outbound write the harvester makes.
 
-*Telegram (recommended)* — the only backend that delivers a long argument
-intact. Messages up to 4096 characters go as text; anything longer is uploaded
-as a single `.md` document (bots may send up to 50 MB), so nothing is cut, and
-it stays in the chat history rather than expiring.
+Messages up to 4096 characters go as text; anything longer is uploaded as a
+single `.md` document (bots may send up to 50 MB), so a long refutation is
+never cut, and it stays in the chat history rather than expiring.
 
 ```
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
@@ -457,14 +344,11 @@ Create the bot with [@BotFather](https://t.me/BotFather) (`/newbot`), then
 **message it once** — a bot cannot open a conversation with you — and read your
 chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
-*ntfy* — set `NTFY_TOPIC=cmv-<topic_name>` and subscribe to that topic in the
-ntfy app. Optional `NTFY_SERVER` (default `https://ntfy.sh`) and `NTFY_TOKEN`.
-
-> ntfy caps a notification body at 4096 bytes, so `notify._send_ntfy` splits a
-> longer message into several independent pushes: they arrive unordered and cut
-> mid-sentence, which is what motivated the Telegram backend. ntfy.sh is also a
-> public relay — the text passes through a third-party server on a guessable
-> topic — whereas a Telegram bot delivers only to your configured chat id.
+> An ntfy backend was removed. It capped a notification body at 4096 bytes and
+> split anything longer into several independent pushes that arrived unordered
+> and cut mid-sentence, and ntfy.sh is a public relay — the text passed through
+> a third-party server on a guessable topic, where a bot delivers only to your
+> configured chat id.
 
 The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
 `RANKER_PATH`, `HF_TOKEN`).
@@ -489,8 +373,8 @@ Reddit permalink) is recorded in a `seen` store.
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (political criticism of Israel is excluded by design). |
-| `notify.py` | Backend dispatch: send one push per generated response (the only outbound write). |
-| `notify_telegram.py` | Telegram backend — long arguments go as a `.md` document instead of being split. |
+| `notify.py` | Message shape (`format_result`) + re-exports the Telegram transport (the only outbound write). |
+| `notify_telegram.py` | Telegram transport — long arguments go as a `.md` document instead of being split. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse
