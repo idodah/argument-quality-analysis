@@ -11,7 +11,7 @@ that drafts a rebuttal and refines it against retrieved evidence.
 
 The target is a set of documented antisemitic tropes — blood libel, Jewish
 control of banking/media/government (Rothschild, ZOG), Holocaust denial, dual
-loyalty, the Khazar myth, Great Replacement, the Protocols, and collective blame
+loyalty, Great Replacement, the Protocols, and collective blame
 of Jews as a group. These are specific, falsifiable claims with an established
 factual record, which is what makes them a tractable retrieval target: the
 groundedness gate has something concrete to check a draft against.
