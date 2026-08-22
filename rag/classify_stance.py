@@ -1,18 +1,24 @@
 """
-Classify each argument in the CMV-Israel RAG corpus as pro-Israel / anti-Israel
-/ neutral / mixed using GPT-4o-mini zero-shot. Filter to high-confidence
-pro-Israel arguments for the RAG corpus.
+Classify each argument in the CMV RAG corpus by how it handles antisemitic
+tropes, using GPT-4o-mini zero-shot. Filter to high-confidence *refutations* —
+arguments that debunk a trope on the factual record — for the RAG corpus.
+
+The retrieval corpus is what the agent cites, so it must contain refutations
+(the myth's origin, who spread it, the contradicting evidence) and NOT
+political advocacy about Israel. `political_argument` exists as its own class
+precisely so that material is identified and excluded rather than silently
+mixed into the evidence store.
 
 Inputs:
     data/cmv_israel_rag.parquet  (from rag.scrape_cmv_israel)
 
 Outputs:
     data/cmv_israel_rag_classified.parquet   all rows + stance fields
-    data/cmv_israel_rag_pro.parquet          filtered to stance=pro_israel, confidence>=0.8
+    data/cmv_israel_rag_pro.parquet          filtered to stance=refutation, confidence>=0.8
     Hub split 'israel_2023_plus_rag_pro' on idodah/argument-quality-cmv
 
 Each row gets:
-    stance       ∈ {pro_israel, anti_israel, neutral, mixed}
+    stance       ∈ {refutation, trope, political_argument, neutral, mixed}
     confidence   ∈ [0, 1]
     rationale    one-sentence explanation from the classifier
 
@@ -44,20 +50,36 @@ MAX_RETRIES = 3
 RETRY_BACKOFF = 2.0
 ARG_TRUNC_CHARS = 6000  # keep prompt within model context cheaply
 
+VALID_STANCES = {"refutation", "trope", "political_argument", "neutral", "mixed"}
+# Only refutations enter the evidence store the agent cites.
+CORPUS_STANCE = "refutation"
 PRO_CONFIDENCE_THRESHOLD = 0.8
 
 SYSTEM_PROMPT = (
-    "You are an expert at analyzing political argumentation about the Israel-Palestine conflict. "
-    "Given an argument from a Reddit ChangeMyView thread, classify its stance toward Israel.\n\n"
+    "You are an expert at analyzing argumentation about antisemitism. Given an "
+    "argument from a Reddit ChangeMyView thread, classify how it handles "
+    "antisemitic tropes (blood libel, Jewish control of banking/media/government, "
+    "Holocaust denial, dual loyalty, the Khazar myth, Great Replacement, the "
+    "Protocols, collective blame of Jews as a group).\n\n"
     "Definitions:\n"
-    "- pro_israel: defends Israel's actions, security needs, or right to exist; criticizes Hamas or anti-Israel framing.\n"
-    "- anti_israel: criticizes Israel's actions or legitimacy; uses framing like apartheid, genocide, occupation, colonialism.\n"
-    "- neutral: presents facts or analysis without taking a side, or argues a tangential point.\n"
-    "- mixed: takes positions that meaningfully favor both sides, or rejects the framing of both sides.\n\n"
-    "Be careful with: quoted rebuttals (the speaker doesn't endorse the quoted view), sarcasm, hedged language. "
+    "- refutation: debunks a trope on the factual or historical record — its origin, "
+    "who propagated it, the evidence that contradicts it. This is the class we want.\n"
+    "- trope: asserts a trope as true.\n"
+    "- political_argument: argues about the Israeli government's policies, conduct, or "
+    "legitimacy. This is political speech, NOT a trope and NOT a refutation of one — "
+    "classify it here regardless of which side it takes.\n"
+    "- neutral: presents facts or analysis without doing any of the above, or argues a "
+    "tangential point.\n"
+    "- mixed: meaningfully does more than one of the above.\n\n"
+    "The key distinction: claims about JEWS AS A GROUP (their nature, loyalty, or "
+    "secret coordinated power) are tropes; claims about a STATE'S CONDUCT are "
+    "political_argument.\n\n"
+    "Be careful with: quoted tropes (a speaker refuting a myth must quote it — that is "
+    "'refutation', not 'trope'), sarcasm, hedged language. "
     "Judge the speaker's own position, not surface keywords.\n\n"
     "Respond with strict JSON: "
-    '{"stance": "pro_israel|anti_israel|neutral|mixed", "confidence": <float 0..1>, "rationale": "<one sentence>"}'
+    '{"stance": "refutation|trope|political_argument|neutral|mixed", '
+    '"confidence": <float 0..1>, "rationale": "<one sentence>"}'
 )
 
 OUT_FEATURES = Features({
@@ -79,7 +101,7 @@ def _classify_one(client: OpenAI, topic: str, argument: str) -> dict:
     user = (
         f"### Thread topic\n{topic}\n\n"
         f"### Argument\n{argument[:ARG_TRUNC_CHARS]}\n\n"
-        "Classify the argument's stance toward Israel. Respond with JSON only."
+        "Classify how the argument handles antisemitic tropes. Respond with JSON only."
     )
     for attempt in range(MAX_RETRIES):
         try:
@@ -95,7 +117,7 @@ def _classify_one(client: OpenAI, topic: str, argument: str) -> dict:
             raw = resp.choices[0].message.content or "{}"
             data = json.loads(raw)
             stance = data.get("stance", "neutral")
-            if stance not in {"pro_israel", "anti_israel", "neutral", "mixed"}:
+            if stance not in VALID_STANCES:
                 stance = "neutral"
             confidence = float(data.get("confidence", 0.0))
             confidence = max(0.0, min(1.0, confidence))
@@ -138,7 +160,7 @@ def push_to_hub(df: pd.DataFrame) -> None:
 
 
 def main(push: bool = True) -> None:
-    """Load the scraped parquet, classify, save all + pro-Israel subsets, push."""
+    """Load the scraped parquet, classify, save all + refutation subsets, push."""
     load_dotenv()
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.scrape_cmv_israel first.")
@@ -153,9 +175,9 @@ def main(push: bool = True) -> None:
     print("\nConfidence quantiles:")
     print(df["confidence"].describe().to_string())
 
-    pro_df = df[(df["stance"] == "pro_israel") & (df["confidence"] >= PRO_CONFIDENCE_THRESHOLD)].reset_index(drop=True)
+    pro_df = df[(df["stance"] == CORPUS_STANCE) & (df["confidence"] >= PRO_CONFIDENCE_THRESHOLD)].reset_index(drop=True)
     pro_df.to_parquet(OUT_PRO, index=False)
-    print(f"\nFiltered to {len(pro_df)} pro-Israel arguments (confidence >= {PRO_CONFIDENCE_THRESHOLD}) -> {OUT_PRO}.")
+    print(f"\nFiltered to {len(pro_df)} trope refutations (confidence >= {PRO_CONFIDENCE_THRESHOLD}) -> {OUT_PRO}.")
 
     if push:
         push_to_hub(pro_df)

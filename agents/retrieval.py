@@ -2,7 +2,8 @@
 Retrieval backends for the Adaptive-RAG step.
 
 Two arms:
-  - local: Chroma vector store (`pro_israel_corpus`), the delta-awarded
+  - local: Chroma vector store (`pro_israel_corpus` — name retained from an
+    earlier iteration; it holds trope refutations), the delta-awarded
     CMV-Israel arguments ingested by the `rag/` pipeline (`rag.ingest_rag`).
   - web:   Tavily search. Requires TAVILY_API_KEY in the environment.
 

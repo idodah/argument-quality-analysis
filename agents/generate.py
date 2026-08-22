@@ -4,6 +4,13 @@
 one CMV post and returns a flat result dict. It is the shared generation path
 used by the CLI (``run.py``), the web app (``webapp/app.py``), and the harvester
 (CLI + MCP server), so all callers run identical generation logic.
+
+The function name and the ``pro_israel_reply`` / ``stance`` values are retained
+from an earlier iteration of this project and are load-bearing across the
+graph's state schema, nodes, and tests. What the pipeline now produces is a
+factual refutation of an antisemitic trope; ``pro_israel_reply=True`` means
+"the draft successfully refutes the trope". See ``agents/prompts.py`` for the
+criteria actually applied.
 """
 
 from __future__ import annotations

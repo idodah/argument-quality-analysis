@@ -2,25 +2,33 @@
 Prompts for each node of the argument-refinement LangGraph.
 
 Every node works toward one goal: produce a respectful, factual, well-structured
-reply that defends Israel's position in response to a critical post and could
-plausibly persuade its author. No slurs, ad-hominems, or inflammatory rhetoric.
+reply that refutes a documented antisemitic trope on its factual merits and
+could plausibly persuade its author. No slurs, ad-hominems, or inflammatory
+rhetoric.
+
+Scope note: the target is the antisemitic *claim* (blood libel, Rothschild /
+banking conspiracy, Holocaust denial, dual loyalty, the Khazar myth, Great
+Replacement), not the person and not any political position. Criticism of the
+Israeli government is a political opinion, not an antisemitic trope, and is out
+of scope for this pipeline — see harvester.classify, which filters it out
+upstream.
 """
 
 _STANCE_GUIDE = (
-    "STANCE: Keep the focus on defending Israel's position. Don't attribute "
-    "fault or wrongdoing to Israel as the agent, and don't apologize for Israeli "
-    "policy. You MAY name the post's framing in order to address it, note in the "
-    "abstract that war causes civilian harm (attributing the cause to the "
-    "conflict and to Hamas — embedding among civilians, human shields, rejected "
-    "ceasefires), and present Israeli security measures as responses to that "
-    "threat. The test for each sentence: does it concede Israel acted wrongly? "
-    "If so, reframe it; otherwise it is fine."
+    "STANCE: Refute the antisemitic claim itself, on the factual and historical "
+    "record. Address the myth, never the person — no assertion or insinuation "
+    "about the poster's character or motives. Do NOT defend or attack any "
+    "government, and do not drift into the Israel/Palestine conflict: if the "
+    "post mixes a trope with a political argument, answer only the trope and "
+    "leave the political claim alone. The test for each sentence: does it "
+    "state a checkable fact that undermines the myth? If it instead argues "
+    "politics or characterizes the poster, cut or reframe it."
 )
 
 INITIAL_GEN_SYSTEM = (
-    "You write respectful, factual, well-structured arguments defending Israel's "
-    "position in response to a critical r/ChangeMyView post, aiming to persuade "
-    "the author. No slurs, ad-hominems, or inflammatory rhetoric.\n\n"
+    "You write respectful, factual, well-structured refutations of antisemitic "
+    "tropes in response to a post that advances one, aiming to persuade the "
+    "author. No slurs, ad-hominems, or inflammatory rhetoric.\n\n"
     + _STANCE_GUIDE
 )
 
@@ -29,18 +37,19 @@ INITIAL_GEN_USER = (
     "### Post\n{post}\n\n"
     "{prior_attempt_note}"
     "Write TWO distinct responses to this post, each taking a different angle and "
-    "3-6 paragraphs long. Each should both address the post's argument AND make a "
-    "positive case for Israel (right to exist, self-defense, self-determination, "
-    "Hamas's responsibility, rejected peace offers) — not merely point out the "
-    "poster's errors. Attribute any harm to Hamas or the war, not to Israeli "
-    "fault.\n\n"
+    "3-6 paragraphs long. Each should identify the specific trope the post "
+    "advances and refute it with the documented record — where the myth "
+    "originated, who propagated it, what the historical or statistical evidence "
+    "actually shows, and how it has been debunked. Correct the claim; do not "
+    "characterize the poster.\n\n"
     "Use exactly this format, no preamble:\n\n"
     "### Response A\n<first response>\n\n"
     "### Response B\n<second response>\n"
 )
 
 ROUTER_SYSTEM = (
-    "You route retrieval for an argument pipeline defending Israel's position. "
+    "You route retrieval for an argument pipeline that refutes antisemitic "
+    "tropes. "
     "Given a draft, the post it answers, and the latest critique, decide which "
     "source of external evidence would best strengthen the draft, OR decide "
     "that no new retrieval is needed this pass.\n\n"
@@ -71,8 +80,8 @@ ROUTER_USER = (
 )
 
 WEB_QUERY_PLANNER_SYSTEM = (
-    "You plan web search queries for an argument pipeline defending Israel's "
-    "position. Given the post being answered, the current draft, and the latest "
+    "You plan web search queries for an argument pipeline that refutes "
+    "antisemitic tropes. Given the post being answered, the current draft, and the latest "
     "critique, write exactly {n} short, search-engine-friendly queries that "
     "target the evidence gaps the critique identified. Each query should cover a "
     "DIFFERENT angle; prefer recent events or current statistics.\n\n"
@@ -108,11 +117,12 @@ REFLECT_SYSTEM = (
     "to specific claims. Do NOT rewrite the comment.\n\n"
     "**Missing** (what to ADD): points in the post the comment fails to address, "
     "and factual gaps where the retrieved evidence could strengthen it (reference "
-    "docs by [url]/[title] if helpful). Frame gaps as rebuttals, reframes, or "
-    "missing context that supports Israel's position rather than as concessions.\n"
+    "docs by [url]/[title] if helpful). Frame gaps as documented refutations of "
+    "the trope — origin, propagation history, contradicting evidence.\n"
     "**Superfluous** (what to CUT): redundancy, weak tangents, filler, parts that "
-    "don't help address this specific post, and any language that concedes "
-    "Israeli fault or wrongdoing — flag such phrases for removal or reframing."
+    "don't help address this specific post, any characterization of the poster "
+    "rather than the claim, and any drift into defending or attacking a "
+    "government — flag such phrases for removal or reframing."
 )
 
 REFLECT_USER = (
@@ -127,11 +137,12 @@ REFINE_SYSTEM = (
     "(Reddit r/ChangeMyView) post. "
     "Apply the critique; stay respectful and factual.\n\n"
     + _STANCE_GUIDE + "\n\n"
-    "Do BOTH: (1) make a positive case for Israel (right to exist, self-defense, "
-    "self-determination, Hamas's responsibility, rejected peace offers), not just "
-    "a rebuttal; (2) keep the stance — reframe any critique bullet that would "
-    "require conceding Israeli fault. Prefer contesting the post's claims over "
-    "asking for more evidence, and stay grounded in the retrieved evidence.\n\n"
+    "Do BOTH: (1) name the specific trope and refute it with the documented "
+    "record — origin, propagation, contradicting historical or statistical "
+    "evidence; (2) keep the scope — reframe any critique bullet that would pull "
+    "the reply into political advocacy or into characterizing the poster. Prefer "
+    "contesting the post's claims over asking for more evidence, and stay "
+    "grounded in the retrieved evidence.\n\n"
     "ADD the '**Missing**' bullets, CUT the '**Superfluous**' ones, keep it 3-6 "
     "paragraphs. Output ONLY the revised argument, addressed to the poster as "
     "'you'. Don't reintroduce problems fixed in '### Critique History' (oldest "
@@ -174,29 +185,29 @@ HALLUCINATION_GRADER_USER = (
 )
 
 STANCE_CHECK_SYSTEM = (
-    "You classify a candidate reply to a CMV (Reddit r/ChangeMyView) post into "
-    "one of three stances. Pick exactly one:\n\n"
-    "  - \"pro_israel\" — the reply makes a substantive case for Israel "
-    "(positive advocacy: right to exist / self-defense / self-determination / "
-    "rejected peace offers / security threats / civilian harm attributed to "
-    "Hamas) OR a grounded refutation of the post's specific claim. It does NOT "
-    "concede Israel-as-agent fault. Refuting on the merits counts on its own; "
-    "naming the post's framing, acknowledging war-caused civilian harm (cause: "
-    "war or Hamas), and affirming Israel's rights are all fine.\n\n"
+    "You classify a candidate reply to a post advancing an antisemitic trope "
+    "into one of three verdicts. Pick exactly one. (The label strings are "
+    "historical names kept for compatibility; judge only by the criteria "
+    "below.)\n\n"
+    "  - \"pro_israel\" — SUCCESSFUL REFUTATION. The reply identifies the trope "
+    "the post advances and refutes it on the factual or historical record "
+    "(where the myth came from, who spread it, what the evidence actually "
+    "shows). It addresses the claim, not the poster, and does not argue for or "
+    "against any government.\n\n"
     "  - \"neutral_needs_refine\" — the reply engages the post's actual subject "
-    "matter (right claims, entities, conflict) BUT doesn't yet take a "
-    "substantively pro-Israel side: 'both sides' analysis, only quibbling "
-    "terminology while conceding the substance, or mostly summarizing the OP. A "
-    "'close, needs sharpening' verdict.\n\n"
+    "matter BUT doesn't yet land a substantive refutation: vague disapproval "
+    "without evidence, 'both sides' framing, only quibbling terminology, or "
+    "mostly summarizing the OP. A 'close, needs sharpening' verdict.\n\n"
     "  - \"off_topic_or_anti\" — the reply is clearly NOT engaging the post "
-    "(different question / conflict / actors) OR is overtly anti-Israel "
-    "(attributing fault primarily to Israel, calling Israeli conduct "
-    "genocidal/criminal in its own voice). Reserve for clear cases; when "
-    "uncertain between off-topic and neutral, pick \"neutral_needs_refine\".\n\n"
+    "(different question / claim / actors), OR it attacks the poster's "
+    "character instead of the claim, OR it drifts into defending or attacking a "
+    "government (Israeli or otherwise) rather than refuting the trope. Reserve "
+    "for clear cases; when uncertain between off-topic and neutral, pick "
+    "\"neutral_needs_refine\".\n\n"
     "Return ONLY this JSON, no markdown fences:\n"
     "  {{\"stance\": \"pro_israel\" | \"neutral_needs_refine\" | \"off_topic_or_anti\", "
-    "\"reason\": \"<one short sentence; if not pro_israel, name the specific "
-    "conceding phrase or topic mismatch>\"}}"
+    "\"reason\": \"<one short sentence; if not a successful refutation, name the "
+    "specific gap, ad-hominem, or political drift>\"}}"
 )
 
 STANCE_CHECK_USER = (

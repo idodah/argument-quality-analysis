@@ -1,8 +1,13 @@
-"""RAG corpus pipeline for the pro-Israel argument retriever.
+"""RAG corpus pipeline for the trope-refutation retriever.
 
-End-to-end the pipeline scrapes Israel-related r/ChangeMyView delta arguments,
-classifies their stance, and ingests the high-confidence pro-Israel ones into
-the Chroma vector store that ``agents.retrieval.LocalRetriever`` queries.
+End-to-end the pipeline scrapes r/ChangeMyView delta arguments, classifies how
+each handles antisemitic tropes, and ingests the high-confidence *refutations*
+into the Chroma vector store that ``agents.retrieval.LocalRetriever`` queries.
+Arguments classified ``political_argument`` (criticism of the Israeli
+government — political speech, not a trope) are excluded from the corpus.
+
+The ``*_pro*`` filenames and the ``pro_israel_corpus`` collection name are
+retained from an earlier iteration of this project to avoid a data migration.
 
 Run order (each is a module, run from the repo root):
     uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet

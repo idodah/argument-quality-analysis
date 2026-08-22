@@ -1,6 +1,6 @@
 """
-Ingest the classified pro-Israel CMV arguments into the Chroma vector store
-used by agents.retrieval.LocalRetriever.
+Ingest the classified trope-refutation CMV arguments into the Chroma vector
+store used by agents.retrieval.LocalRetriever.
 
 Reads data/cmv_israel_rag_pro.parquet and adds one document per argument to the
 `pro_israel_corpus` collection at .chroma/ — the same collection retrieve_local
@@ -33,13 +33,13 @@ ARGUMENT_MAX_CHARS = 6000
 
 
 def main(reset: bool = False) -> None:
-    """Embed the pro-Israel arguments and upsert them into the Chroma collection."""
+    """Embed the refutation arguments and upsert them into the Chroma collection."""
     load_dotenv()
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.classify_stance first.")
 
     df = pd.read_parquet(INPUT_PARQUET)
-    print(f"Loaded {len(df)} pro-Israel arguments from {INPUT_PARQUET}.")
+    print(f"Loaded {len(df)} refutation arguments from {INPUT_PARQUET}.")
     if df.empty:
         print("Nothing to ingest.")
         return

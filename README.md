@@ -1,10 +1,31 @@
 # Argument Quality Analysis
 
-This project's goal is to **find anti-Israel arguments on three social networks (e.g reddit) and automatically generate a well-grounded,
-persuasive pro-Israel response to each argument.** To do that well, it first studies
+This project's goal is to **find posts advancing antisemitic tropes on three social
+networks (e.g. reddit) and automatically generate a well-grounded, persuasive
+factual refutation of each one.** To do that well, it first studies
 what makes an argument persuasive at all and trains a model that, given two
 arguments, predicts which one changed the reader's view, then builds an agent
 that drafts a rebuttal and refines it against retrieved evidence.
+
+### Scope: tropes, not politics
+
+The target is a set of documented antisemitic tropes — blood libel, Jewish
+control of banking/media/government (Rothschild, ZOG), Holocaust denial, dual
+loyalty, the Khazar myth, Great Replacement, the Protocols, and collective blame
+of Jews as a group. These are specific, falsifiable claims with an established
+factual record, which is what makes them a tractable retrieval target: the
+groundedness gate has something concrete to check a draft against.
+
+**Criticism of the Israeli government is explicitly out of scope and is filtered
+out.** Its policies, military conduct, and legitimacy as a state are political
+questions, and treating dissent on them as bigotry would both misclassify
+political speech and make the system's claims indefensible. The distinction the
+classifiers are asked to draw is: a claim about *Jews as a group* (their nature,
+loyalty, or secret coordinated power) is a trope; a claim about *a state's
+conduct* is politics. `rag.classify_stance` carries `political_argument` as its
+own class so such material is identified and kept out of the evidence corpus,
+and `harvester.classify` defaults to "no" on any ambiguity — a missed trope
+costs nothing, a false positive mislabels a real person.
 
 ### Background: r/changemyview and deltas
 
@@ -26,14 +47,14 @@ quality and learn to rank arguments accordingly.
    and a QLoRA fine-tuned Qwen3-8B ranker, all trained to predict which of two
    arguments changed the reader's view.
 3. **Agents** (`agents/`) — a LangGraph workflow that drafts **two** candidate
-   pro-Israel rebuttals to a given post, then iteratively refines the stronger
+   refutations of a given post's trope, then iteratively refines the stronger
    one against retrieved evidence, using Adaptive-RAG, Self-RAG, Corrective-RAG
    (CRAG), and Reflexion patterns.
 
-Supporting these are **RAG** (`rag/`), a pro-Israel retrieval corpus of scraped
-delta-awarded CMV-Israel arguments ingested into Chroma so the agent can ground
+Supporting these are **RAG** (`rag/`), a retrieval corpus of scraped
+delta-awarded CMV refutations ingested into Chroma so the agent can ground
 its rebuttals; the **harvester**
-(`harvester/`), which detects anti-Israel posts live across the three social
+(`harvester/`), which detects trope-advancing posts live across the three social
 networks (Reddit, and the Fediverse platforms Lemmy and PieFed) and drafts
 rebuttals with the agent workflow; **infra** (`infra/`), the Terraform + GitHub
 Actions stack that runs the harvester on AWS as a scheduled, serverless job; and
@@ -44,7 +65,7 @@ the package layout.
 
 ```
 preprocessing/   # pair-wise data pipelines (Webis-CMV-20, winning-args-corpus)
-rag/             # pro-Israel retrieval corpus
+rag/             # trope-refutation retrieval corpus
 models/          # TF-IDF baselines, GPT-5.4-nano baseline, Qwen3-8B ranker
 agents/          # LangGraph refinement workflow
 harvester/       # live Reddit/Lemmy/PieFed detector -> draft -> notify
@@ -122,13 +143,20 @@ train on.
 uv run python -m preprocessing.filter_by_tokens
 ```
 
-### The pro-Israel retrieval corpus
+### The refutation retrieval corpus
 
 The `rag/` package builds the evidence corpus the agent grounds its rebuttals
-in **delta-awarded CMV-Israel arguments**. It scrapes Israel-related CMV
-threads, classifies each argument's stance, and ingests the high-confidence
-pro-Israel comments (i.e. persuasive, real-world rebuttals that already worked on
-a human) into the Chroma collection `pro_israel_corpus`.
+in **delta-awarded CMV refutations**. It scrapes CMV threads, classifies how
+each argument handles antisemitic tropes (`refutation` / `trope` /
+`political_argument` / `neutral` / `mixed`), and ingests the high-confidence
+refutations (i.e. persuasive, real-world rebuttals that already worked on
+a human) into the Chroma collection `pro_israel_corpus`. Arguments classified
+`political_argument` are deliberately excluded, so the evidence the agent cites
+is factual debunking rather than political advocacy.
+
+> The Chroma collection name and the `*_pro*` data filenames are retained from
+> the project's earlier iteration to avoid a disruptive data migration; the
+> corpus they hold is refutations.
 
 ```bash
 uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
@@ -201,7 +229,7 @@ patterns** that the wiring implements.
   initial drafts and keeps the winner as `argument`; only that survivor
   iterates from here (the loser is dropped).
 - **early_stance_check** — pre-refinement stance gate on the raw
-  survivor. Catches only the off-topic / anti-Israel case and regenerates immediately; on-topic survivors fall through to the router.
+  survivor. Catches only the off-topic / ad-hominem / political-drift case and regenerates immediately; on-topic survivors fall through to the router.
 - **router** — Adaptive-RAG: each pass picks `local`, `web`, or `none` (skip
   retrieval — the current draft is strong enough to refine without new
   evidence); when it picks `web`, the same call also plans the search queries
@@ -210,7 +238,7 @@ patterns** that the wiring implements.
   existing pool, so refinement still runs and can cite previously-grounded facts
   without fetching fresh evidence.
 - **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
-  CMV-Israel arguments) using the topic + post as the query.
+  CMV refutations) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
   restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
 - **grade_docs** — CRAG per-chunk relevance grading. Keeps the relevant
@@ -232,8 +260,15 @@ patterns** that the wiring implements.
   (→ generate_initial, regeneration loop). It records a `regen_reason` the next
   pass must fix, and sets `gave_up=True` (→ finalize) when both the refinement
   and regeneration budgets are exhausted.
+
+  > **Label naming:** the three verdict strings (and the `pro_israel_reply` state
+  > key) are retained from the project's earlier iteration and are load-bearing
+  > across the graph's state schema, nodes, and tests. Read them by their current
+  > criteria: `pro_israel` = *successfully refutes the trope*,
+  > `off_topic_or_anti` = *off-topic, attacks the poster, or drifts into
+  > political advocacy*. The criteria live in `agents/prompts.py`.
 - **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
-  grounded / pro-Israel / gave-up warnings (and whether grounding was verified),
+  grounded / refutation-quality / gave-up warnings (and whether grounding was verified),
   and prints the run's trajectory.
 
 ### Graph topology
@@ -256,15 +291,15 @@ Refinement is governed by four independent loops, each with its own cap:
   draft is ungrounded, up to `MAX_GROUND_RETRIES = 2` (2 grounding retries) per
   refinement pass.
 - **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
-  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
+  not yet a substantive refutation, it reroutes for another refinement pass,
   up to `MAX_REFINE_ITERS = 3` (3 passes — the first pass plus 2 reroutes) per
   generation.
 - **Early-regeneration loop** (`early_stance_check -> generate_initial`): if the
-  raw survivor is off-topic or anti-Israel, both drafts are thrown out and
-  regenerated before any refinement, up to `MAX_EARLY_REGEN_ITERS = 2` (2
-  regeneration retries) per generation.
+  raw survivor is off-topic or drifts into political advocacy, both drafts are
+  thrown out and regenerated before any refinement, up to
+  `MAX_EARLY_REGEN_ITERS = 2` (2 regeneration retries) per generation.
 - **Late-regeneration loop** (`stance_check -> generate_initial`): if a refined
-  draft is still off-topic or anti-Israel, both drafts are regenerated, up to
+  draft is still off-topic or politically drifting, both drafts are regenerated, up to
   `MAX_LATE_REGEN_ITERS = 1` (1 regeneration retry) across the whole run (each
   regeneration resets the refinement counter).
 
@@ -288,17 +323,24 @@ Four patterns are fused into the graph:
 ## Harvester
 
 The `harvester/` package applies the agent workflow to live data: it searches
-three social networks — **Reddit, Lemmy, and PieFed** — for recent anti-Israel
-posts, drafts a pro-Israel
-rebuttal with the same `agents.generate` entrypoint, and pushes it to the operator
+three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
+advancing an antisemitic trope, drafts a factual refutation
+with the same `agents.generate` entrypoint, and pushes it to the operator
 via ntfy app. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
+
+Detection is deliberately conservative: a cheap keyword prefilter (trope
+vocabulary, not geopolitics) gates an LLM classifier that is instructed to
+answer "no" whenever a post is political criticism of Israel, is quoting or
+debunking a trope, or is simply ambiguous. Combined with the human-in-the-loop
+boundary above, a false positive costs an operator one discarded draft rather
+than publicly labelling someone a bigot.
 
 ```
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
   │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
-  │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py          │
+  │  search 3 platforms │──►│  keyword + LLM trope     │──►│ tracking.py          │
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
             ▲
@@ -341,7 +383,7 @@ Reddit permalink) is recorded in a `seen` store.
 | `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
-| `classify.py` | keyword prefilter, then an LLM anti-Israel stance classifier. |
+| `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (political criticism of Israel is excluded by design). |
 | `notify.py` | Send one ntfy push per generated response (the only outbound write). |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
