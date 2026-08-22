@@ -16,17 +16,6 @@ of Jews as a group. These are specific, falsifiable claims with an established
 factual record, which is what makes them a tractable retrieval target: the
 groundedness gate has something concrete to check a draft against.
 
-**Criticism of the Israeli government is explicitly out of scope and is filtered
-out.** Its policies, military conduct, and legitimacy as a state are political
-questions, and treating dissent on them as bigotry would both misclassify
-political speech and make the system's claims indefensible. The distinction the
-classifiers are asked to draw is: a claim about *Jews as a group* (their nature,
-loyalty, or secret coordinated power) is a trope; a claim about *a state's
-conduct* is politics. `rag.classify_stance` carries `political_argument` as its
-own class so such material is identified and kept out of the evidence corpus,
-and `harvester.classify` defaults to "no" on any ambiguity — a missed trope
-costs nothing, a false positive mislabels a real person.
-
 ### Background: r/changemyview and deltas
 
 The persuasion signal comes from Reddit's [r/changemyview
