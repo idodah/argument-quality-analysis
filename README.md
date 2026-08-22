@@ -344,12 +344,6 @@ Create the bot with [@BotFather](https://t.me/BotFather) (`/newbot`), then
 **message it once** — a bot cannot open a conversation with you — and read your
 chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
-> An ntfy backend was removed. It capped a notification body at 4096 bytes and
-> split anything longer into several independent pushes that arrived unordered
-> and cut mid-sentence, and ntfy.sh is a public relay — the text passed through
-> a third-party server on a guessable topic, where a bot delivers only to your
-> configured chat id.
-
 The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
 `RANKER_PATH`, `HF_TOKEN`).
 
