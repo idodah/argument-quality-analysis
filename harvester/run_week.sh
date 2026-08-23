@@ -12,12 +12,18 @@
 # Usage (from the repo root):
 #   nohup bash harvester/run_week.sh > harvester_week.out 2>&1 &
 #
+# On a CPU-only node:
+#   RANKER_DISABLED=1 nohup bash harvester/run_week.sh > harvester_week.out 2>&1 &
+#
 # Tunables via env (defaults in parens):
 #   INTERVAL_SEC   seconds between runs               (3600 = hourly)
 #   DURATION_SEC   total run window                   (604800 = 7 days)
 #   MAX_GENS       --max-generations per run          (3)
 #   HARVESTER_DB   sqlite ledger path                 (harvester_tracking_local.db)
-#   EXTRA_ARGS     extra flags passed to orchestrate  (e.g. "--query 'israel gaza'")
+#   EXTRA_ARGS     extra flags passed to orchestrate  (e.g. "--query 'rothschild khazar'")
+#   RANKER_DISABLED  set to 1 on a CPU-only node: skips loading the 8B Qwen
+#                    ranker each run (it only breaks the A/B tie at
+#                    eliminate_loser; the stance gate still corrects a bad pick)
 set -uo pipefail
 
 # Resolve the repo root from this script's location so cron/Slurm can call it by
@@ -41,10 +47,12 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   echo "===== [run_week] run #${run} at $(date -u +%Y-%m-%dT%H:%M:%SZ) ====="
 
   # A crash in one run must not kill the week; capture the status and keep going.
-  if uv run python -m harvester.orchestrate --max-generations "$MAX_GENS" ${EXTRA_ARGS:-}; then
+  uv run python -m harvester.orchestrate --max-generations "$MAX_GENS" ${EXTRA_ARGS:-}
+  status=$?
+  if [ "$status" -eq 0 ]; then
     echo "[run_week] run #${run} ok"
   else
-    echo "[run_week] run #${run} FAILED (exit $?) — continuing"
+    echo "[run_week] run #${run} FAILED (exit ${status}) — continuing"
   fi
 
   # Don't oversleep past the deadline on the final iteration.

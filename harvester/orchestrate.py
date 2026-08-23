@@ -13,7 +13,7 @@ Read + draft + notify ONLY — never posts back.
 
     uv run python -m harvester.orchestrate                  # defaults: 3 max, last 24h
     uv run python -m harvester.orchestrate --dry-run        # search + classify, no drafting
-    uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
+    uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
 
 Per-run bounds (defaults): at most `--max-generations 3` answers, only posts from
 the last `--max-age-hours 24`. Dedup uses the SQLite `seen` ledger keyed on
@@ -231,8 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.dry_run and not args.no_notify and not notify_mod.configured():
-        print("[orchestrate] ERROR: notifier not configured. Set TELEGRAM_BOT_TOKEN "
-              "and TELEGRAM_CHAT_ID in your .env, or pass --no-notify / --dry-run.",
+        print("[orchestrate] ERROR: notifier not configured. Set "
+              "DISCORD_WEBHOOK_URL in your .env, or pass --no-notify / --dry-run.",
               file=sys.stderr)
         return 2
 

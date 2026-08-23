@@ -1,9 +1,9 @@
-"""Offline tests for the notifier backends.
+"""Offline tests for the Discord notifier backend.
 
-The bug these guard against is the one that motivated moving to Telegram: a
-long argument being silently cut. The previous ntfy backend capped a
-notification at 4096 bytes and split past it; Telegram instead sends anything
-over its limit as a single .md document, so the text arrives whole.
+The bug these guard against is the one that drove two backend changes: a long
+argument being silently cut. An earlier ntfy backend capped a notification at
+4096 bytes and split past it; Discord instead sends anything over its 2000-char
+`content` limit as a single `.md` attachment, so the text arrives whole.
 
 No network: `requests.post` is stubbed and the calls are inspected.
 """
@@ -19,134 +19,147 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harvester import notify, notify_telegram
+from harvester import notify, notify_discord
+
+WEBHOOK = "https://discord.com/api/webhooks/123/abc"
 
 
 @pytest.fixture
-def tg_env(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+def dc_env(monkeypatch):
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", WEBHOOK)
 
 
-def _ok_response():
+def _ok_response(status=204):
     resp = mock.Mock()
-    resp.status_code = 200
-    resp.json.return_value = {"ok": True, "result": {}}
+    resp.status_code = status
+    resp.json.return_value = {}
+    resp.text = ""
     return resp
 
 
 # --------------------------------------------------------------------------- #
-# Telegram: short vs. long
+# short vs. long
 # --------------------------------------------------------------------------- #
-def test_short_message_goes_as_text(tg_env):
-    with mock.patch.object(notify_telegram.requests, "post",
+def test_short_message_goes_inline(dc_env):
+    with mock.patch.object(notify_discord.requests, "post",
                            return_value=_ok_response()) as post:
-        notify_telegram.send("a short argument")
+        notify_discord.send("a short argument")
     (url,), kwargs = post.call_args
-    assert url.endswith("/sendMessage")
-    assert kwargs["data"]["text"] == "a short argument"
+    assert url == WEBHOOK
+    assert kwargs["json"]["content"] == "a short argument"
     assert kwargs.get("files") is None
 
 
-def test_long_message_is_sent_whole_as_a_document(tg_env):
+def test_long_message_is_sent_whole_as_an_attachment(dc_env):
     # The regression that matters: nothing may be truncated or split.
-    body = "x" * (notify_telegram.MAX_TEXT + 5000)
-    with mock.patch.object(notify_telegram.requests, "post",
+    body = "x" * (notify_discord.MAX_CONTENT + 5000)
+    with mock.patch.object(notify_discord.requests, "post",
                            return_value=_ok_response()) as post:
-        notify_telegram.send(body)
-    (url,), kwargs = post.call_args
-    assert url.endswith("/sendDocument")
-    _, buf, _ = kwargs["files"]["document"]
-    assert buf.getvalue().decode() == body, "document must carry the FULL text"
+        notify_discord.send(body)
+    kwargs = post.call_args.kwargs
+    _, buf, _ = kwargs["files"]["files[0]"]
+    assert buf.getvalue().decode() == body, "attachment must carry the FULL text"
 
 
-def test_long_message_sends_exactly_one_request(tg_env):
-    body = "y" * (notify_telegram.MAX_TEXT * 3)
-    with mock.patch.object(notify_telegram.requests, "post",
+def test_long_message_sends_exactly_one_request(dc_env):
+    body = "y" * (notify_discord.MAX_CONTENT * 3)
+    with mock.patch.object(notify_discord.requests, "post",
                            return_value=_ok_response()) as post:
-        notify_telegram.send(body)
+        notify_discord.send(body)
     assert post.call_count == 1, "must not split into multiple notifications"
 
 
-def test_document_caption_respects_the_api_limit(tg_env):
-    body = "z" * (notify_telegram.MAX_TEXT + 100)
-    with mock.patch.object(notify_telegram.requests, "post",
+def test_inline_content_respects_the_api_limit(dc_env):
+    body = "z" * (notify_discord.MAX_CONTENT + 100)
+    with mock.patch.object(notify_discord.requests, "post",
                            return_value=_ok_response()) as post:
-        notify_telegram.send(body)
-    caption = post.call_args.kwargs["data"]["caption"]
-    assert len(caption) <= notify_telegram.MAX_CAPTION
+        notify_discord.send(body, click_url="https://reddit.com/r/x/1")
+    payload = json.loads(post.call_args.kwargs["data"]["payload_json"])
+    assert len(payload["content"]) <= notify_discord.MAX_CONTENT
 
 
-def test_click_url_becomes_an_inline_button(tg_env):
-    with mock.patch.object(notify_telegram.requests, "post",
+def _sent_content(post):
+    """The `content` field, whichever path was taken (inline json or multipart)."""
+    kwargs = post.call_args.kwargs
+    if kwargs.get("json") is not None:
+        return kwargs["json"]["content"]
+    return json.loads(kwargs["data"]["payload_json"])["content"]
+
+
+def test_message_near_the_cap_never_overflows_once_the_link_is_added(dc_env):
+    # A body just under 2000 plus an appended url would exceed the cap, so it
+    # must fall to the attachment path rather than being sent over-length.
+    body = "q" * (notify_discord.MAX_CONTENT - 10)
+    with mock.patch.object(notify_discord.requests, "post",
                            return_value=_ok_response()) as post:
-        notify_telegram.send("hi", click_url="https://reddit.com/r/x/1")
-    markup = json.loads(post.call_args.kwargs["data"]["reply_markup"])
-    assert markup["inline_keyboard"][0][0]["url"] == "https://reddit.com/r/x/1"
+        notify_discord.send(body, click_url="https://reddit.com/r/x/1")
+    assert len(_sent_content(post)) <= notify_discord.MAX_CONTENT
+    # and the full body still goes out, in the attachment
+    _, buf, _ = post.call_args.kwargs["files"]["files[0]"]
+    assert buf.getvalue().decode() == body
 
 
-def test_non_http_click_url_is_dropped(tg_env):
-    with mock.patch.object(notify_telegram.requests, "post",
+def test_click_url_is_appended_as_a_link(dc_env):
+    with mock.patch.object(notify_discord.requests, "post",
                            return_value=_ok_response()) as post:
-        notify_telegram.send("hi", click_url="javascript:alert(1)")
-    assert "reply_markup" not in post.call_args.kwargs["data"]
+        notify_discord.send("hi", click_url="https://reddit.com/r/x/1")
+    assert "https://reddit.com/r/x/1" in post.call_args.kwargs["json"]["content"]
 
 
-def test_markdown_parse_failure_retries_as_plain_text(tg_env):
-    # Generated prose can contain a stray '*' or '_'. Losing the notification to
-    # a formatting quirk is worse than losing the formatting.
+def test_non_http_click_url_is_dropped(dc_env):
+    with mock.patch.object(notify_discord.requests, "post",
+                           return_value=_ok_response()) as post:
+        notify_discord.send("hi", click_url="javascript:alert(1)")
+    assert "javascript" not in post.call_args.kwargs["json"]["content"]
+
+
+def test_http_200_is_also_accepted(dc_env):
+    with mock.patch.object(notify_discord.requests, "post",
+                           return_value=_ok_response(200)):
+        notify_discord.send("hi")  # must not raise
+
+
+def test_error_response_raises_with_discord_message(dc_env):
     bad = mock.Mock()
-    bad.status_code = 400
-    bad.json.return_value = {"ok": False, "description": "Bad Request: can't parse entities"}
-    with mock.patch.object(notify_telegram.requests, "post",
-                           side_effect=[bad, _ok_response()]) as post:
-        notify_telegram.send("a *broken_ markdown message")
-    assert post.call_count == 2
-    assert "parse_mode" not in post.call_args.kwargs["data"]
+    bad.status_code = 404
+    bad.json.return_value = {"message": "Unknown Webhook", "code": 10015}
+    bad.text = ""
+    with mock.patch.object(notify_discord.requests, "post", return_value=bad):
+        with pytest.raises(RuntimeError, match="Unknown Webhook"):
+            notify_discord.send("hi")
 
 
-def test_missing_credentials_raises_with_setup_help(monkeypatch):
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    with pytest.raises(RuntimeError, match="BotFather"):
-        notify_telegram.send("hi")
+def test_missing_webhook_raises_with_setup_help(monkeypatch):
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    with pytest.raises(RuntimeError, match="Webhooks"):
+        notify_discord.send("hi")
 
 
 # --------------------------------------------------------------------------- #
-# notify.py re-exports the telegram transport
+# notify.py re-exports the discord transport
 # --------------------------------------------------------------------------- #
-def test_notify_send_is_the_telegram_send(monkeypatch):
+def test_notify_send_is_the_discord_send():
     # notify.py owns the message shape and re-exports the transport; there is
-    # no dispatch layer any more, so these must be the same function.
-    assert notify.send is notify_telegram.send
-    assert notify.configured is notify_telegram.configured
+    # no dispatch layer, so these must be the same function.
+    assert notify.send is notify_discord.send
+    assert notify.configured is notify_discord.configured
 
 
-def test_configured_is_false_without_credentials(monkeypatch):
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+def test_configured_reflects_the_env(monkeypatch):
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
     assert notify.configured() is False
-
-
-def test_configured_is_true_with_credentials(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:a")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "2")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", WEBHOOK)
     assert notify.configured() is True
 
 
-def test_partial_credentials_are_not_configured(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:a")
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    assert notify.configured() is False
+def test_no_removed_backend_env_is_read_anywhere():
+    """Regression: no NTFY_* or TELEGRAM_* env var may be read.
 
-
-def test_no_ntfy_env_is_read_anywhere():
-    """Regression: no NTFY_* env var may be read, i.e. no second delivery path.
-
-    Checks the uppercase env-var prefix specifically. Lowercase "ntfy" still
-    appears in `notify.py`'s docstring, which explains why the backend was
-    removed — that prose is deliberate and must not trip this guard.
+    Checks the uppercase env-var prefixes specifically; lowercase prose in the
+    module docstring explains why those backends were dropped and is deliberate.
     """
     import inspect
-    for mod in (notify, notify_telegram):
-        assert "NTFY" not in inspect.getsource(mod), mod.__name__
+    for mod in (notify, notify_discord):
+        src = inspect.getsource(mod)
+        assert "NTFY" not in src, mod.__name__
+        assert "TELEGRAM_" not in src, mod.__name__

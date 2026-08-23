@@ -1,19 +1,26 @@
-"""Notifier: send one Telegram push per generated response.
+"""Notifier: send one Discord push per generated response.
 
-The transport lives in `harvester.notify_telegram`; this module owns the
-message *shape* (`format_result`) and re-exports `send` / `configured` so
-callers have one import.
+The transport lives in `harvester.notify_discord`; this module owns the message
+*shape* (`format_result`) and re-exports `send` / `configured` so callers have
+one import.
 
-Telegram is the only backend. An ntfy backend was removed: ntfy caps a
-notification body at 4096 bytes, so a long refutation was split into several
-independent pushes that arrived unordered and cut mid-sentence, and ntfy.sh is
-a public relay serving attachments at guessable URLs. Telegram sends anything
-over its limit as a single .md document to one configured chat id instead.
+Discord is the only backend. Two earlier ones were removed:
+
+  - ntfy capped a notification body at 4096 bytes and split anything longer
+    into independent pushes that arrived unordered and cut mid-sentence, and
+    ntfy.sh is a public relay serving attachments at guessable URLs.
+  - Telegram handled long messages correctly but `api.telegram.org` is
+    unreachable from the cluster this runs on (TLS reset at handshake, while
+    discord.com, Slack, Pushover and the SMTP relays all responded) — the block
+    is Telegram-specific, so no code change could work around it.
+
+Discord takes content up to 2000 characters inline and anything longer as a
+`.md` attachment, so a long refutation still arrives whole.
 """
 
 from __future__ import annotations
 
-from harvester.notify_telegram import configured, send
+from harvester.notify_discord import configured, send
 
 __all__ = ["configured", "send", "format_result"]
 

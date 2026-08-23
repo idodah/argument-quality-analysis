@@ -123,7 +123,7 @@ data "aws_iam_policy_document" "task" {
     ]
   }
 
-  # Read the runtime secrets (Tavily / Telegram / OpenAI) directly too, so the code
+  # Read the runtime secrets (Tavily / Discord / OpenAI) directly too, so the code
   # can fetch them by name if not injected as env.
   statement {
     sid       = "ReadSecrets"
@@ -165,8 +165,7 @@ locals {
   container_secrets = concat(
     [
       { name = "TAVILY_API_KEY", valueFrom = aws_secretsmanager_secret.this["tavily"].arn },
-      { name = "TELEGRAM_BOT_TOKEN", valueFrom = "${aws_secretsmanager_secret.this["telegram"].arn}:bot_token::" },
-      { name = "TELEGRAM_CHAT_ID", valueFrom = "${aws_secretsmanager_secret.this["telegram"].arn}:chat_id::" },
+      { name = "DISCORD_WEBHOOK_URL", valueFrom = "${aws_secretsmanager_secret.this["discord"].arn}:webhook_url::" },
     ],
     var.create_openai_secret ? [
       { name = "OPENAI_API_KEY", valueFrom = aws_secretsmanager_secret.this["openai"].arn },

@@ -46,6 +46,15 @@ from __future__ import annotations
 
 import argparse
 
+from dotenv import load_dotenv
+
+# Load .env BEFORE importing anything that reads env at import time. agents.llm
+# reads LLM_BACKEND (and the model ids) as module-level constants, so .env must
+# already be in os.environ when that import runs — otherwise `LLM_BACKEND=openai`
+# in .env is ignored and the backend silently falls back to the bedrock default.
+# harvester.orchestrate does the same thing for the same reason.
+load_dotenv()
+
 from langgraph.graph import END, StateGraph
 
 from agents.graph.nodes import (
@@ -190,10 +199,7 @@ def print_result(out: dict) -> None:
 
 
 def _main() -> None:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
+    # .env is already loaded at import time (see the top of this module).
     parser = argparse.ArgumentParser(description="Refine a factual refutation of a post advancing an antisemitic trope.")
     parser.add_argument("--topic", required=True, help="Topic / CMV title.")
     parser.add_argument("--post", required=True, help="The original post body advancing the trope.")

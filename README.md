@@ -295,7 +295,7 @@ The `harvester/` package applies the agent workflow to live data: it searches
 three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
 advancing an antisemitic trope, drafts a factual refutation
 with the same `agents.generate` entrypoint, and pushes it to the operator
-via Telegram. It is **read + draft + notify only** — it never posts back; a human
+via Discord. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
 
 Detection is deliberately conservative: a cheap keyword prefilter (trope
@@ -308,7 +308,7 @@ than publicly labelling someone a bigot.
 ```
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
-  │ orchestrate.py      │   │ classify.py              │   │ notify.py (telegram) │
+  │ orchestrate.py      │   │ classify.py              │   │ notify.py (discord)  │
   │  search 3 platforms │──►│  keyword + LLM trope     │──►│ tracking.py          │
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
@@ -328,21 +328,28 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
 ```
 
-**Notifier setup.** Notifications go to **Telegram** — the only backend, and
-the only outbound write the harvester makes.
+**Notifier setup.** Notifications go to a **Discord webhook** — the only
+backend, and the only outbound write the harvester makes.
 
-Messages up to 4096 characters go as text; anything longer is uploaded as a
-single `.md` document (bots may send up to 50 MB), so a long refutation is
-never cut, and it stays in the chat history rather than expiring.
+Content up to 2000 characters posts inline; anything longer is uploaded as a
+single `.md` attachment, so a long refutation is never cut.
 
 ```
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-TELEGRAM_CHAT_ID=987654321
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
 ```
 
-Create the bot with [@BotFather](https://t.me/BotFather) (`/newbot`), then
-**message it once** — a bot cannot open a conversation with you — and read your
-chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+Create it in Discord: **Server Settings → Integrations → Webhooks → New
+Webhook**, pick a channel, then **Copy Webhook URL**. No bot, no tokens to
+manage — but treat the URL as a credential, since anyone holding it can post to
+that channel.
+
+> Two earlier backends were removed. **ntfy** capped a notification at 4096
+> bytes and split anything longer into independent pushes that arrived
+> unordered and cut mid-sentence, and ntfy.sh is a public relay. **Telegram**
+> handled long messages correctly, but `api.telegram.org` is unreachable from
+> the cluster this runs on — TLS reset at handshake, while discord.com, Slack,
+> Pushover and the SMTP relays all responded, so the block is Telegram-specific
+> and no code change could work around it.
 
 The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
 `RANKER_PATH`, `HF_TOKEN`).
@@ -367,8 +374,8 @@ Reddit permalink) is recorded in a `seen` store.
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
-| `notify.py` | Message shape (`format_result`) + re-exports the Telegram transport (the only outbound write). |
-| `notify_telegram.py` | Telegram transport — long arguments go as a `.md` document instead of being split. |
+| `notify.py` | Message shape (`format_result`) + re-exports the Discord transport (the only outbound write). |
+| `notify_discord.py` | Discord webhook transport — long arguments go as a `.md` attachment instead of being split. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse
