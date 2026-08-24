@@ -295,7 +295,7 @@ The `harvester/` package applies the agent workflow to live data: it searches
 three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
 advancing an antisemitic trope, drafts a factual refutation
 with the same `agents.generate` entrypoint, and pushes it to the operator
-via Discord. It is **read + draft + notify only** — it never posts back; a human
+via email. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
 
 Detection is deliberately conservative: a cheap keyword prefilter (trope
@@ -308,7 +308,7 @@ than publicly labelling someone a bigot.
 ```
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
-  │ orchestrate.py      │   │ classify.py              │   │ notify.py (discord)  │
+  │ orchestrate.py      │   │ classify.py              │   │ notify.py (email)    │
   │  search 3 platforms │──►│  keyword + LLM trope     │──►│ tracking.py          │
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
@@ -328,28 +328,36 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
 ```
 
-**Notifier setup.** Notifications go to a **Discord webhook** — the only
+**Notifier setup.** Results are emailed to you over **SMTP** — the only
 backend, and the only outbound write the harvester makes.
 
-Content up to 2000 characters posts inline; anything longer is uploaded as a
-single `.md` attachment, so a long refutation is never cut.
+Email has no length limit, so the entire refutation arrives in the message body
+untouched: searchable, permanent, readable from any device, and no app to
+install. Uses only the standard library, so it adds no dependency.
 
 ```
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
+SMTP_HOST=smtp.gmail.com     # optional, this is the default
+SMTP_PORT=587                # optional; 587 STARTTLS or 465 implicit SSL
+SMTP_USER=you@gmail.com
+SMTP_PASSWORD=...            # App Password, NOT your account password
+EMAIL_TO=you@gmail.com
+EMAIL_FROM=you@gmail.com     # optional, defaults to SMTP_USER
 ```
 
-Create it in Discord: **Server Settings → Integrations → Webhooks → New
-Webhook**, pick a channel, then **Copy Webhook URL**. No bot, no tokens to
-manage — but treat the URL as a credential, since anyone holding it can post to
-that channel.
+For Gmail: turn on 2-Step Verification, then create an **App Password**
+(Google Account → Security → App passwords) — a normal account password is
+rejected. Other providers work the same way; only host/port change.
 
-> Two earlier backends were removed. **ntfy** capped a notification at 4096
-> bytes and split anything longer into independent pushes that arrived
-> unordered and cut mid-sentence, and ntfy.sh is a public relay. **Telegram**
-> handled long messages correctly, but `api.telegram.org` is unreachable from
-> the cluster this runs on — TLS reset at handshake, while discord.com, Slack,
-> Pushover and the SMTP relays all responded, so the block is Telegram-specific
-> and no code change could work around it.
+> Three backends were tried before this one, and the reasons are worth keeping.
+> **ntfy** capped a notification at 4096 bytes and split anything longer into
+> independent pushes that arrived unordered and cut mid-sentence. **Telegram**
+> handled long messages properly, but `api.telegram.org` is unreachable from
+> the cluster this runs on — TLS reset at handshake, while Discord, Slack,
+> Pushover and the SMTP relays all responded, so the block was
+> Telegram-specific. **Discord** worked, but still split a long refutation
+> between an inline excerpt and a `.md` attachment. Email is the only transport
+> that needs no length workaround at all, and SMTP is permitted almost anywhere
+> HTTPS is — which matters after losing two backends to reachability.
 
 The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
 `RANKER_PATH`, `HF_TOKEN`).
@@ -374,8 +382,8 @@ Reddit permalink) is recorded in a `seen` store.
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
-| `notify.py` | Message shape (`format_result`) + re-exports the Discord transport (the only outbound write). |
-| `notify_discord.py` | Discord webhook transport — long arguments go as a `.md` attachment instead of being split. |
+| `notify.py` | Message shape (`format_result`) + re-exports the email transport (the only outbound write). |
+| `notify_email.py` | SMTP transport (stdlib) — no length limit, so the full refutation goes in the body. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse

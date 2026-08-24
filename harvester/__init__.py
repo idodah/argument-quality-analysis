@@ -2,7 +2,7 @@
 draft factual refutations.
 
 READ + DRAFT + NOTIFY only — it never posts, comments, or votes; the only outbound
-write is a single Discord webhook push to the operator. The generation logic itself lives in
+write is a single email to the operator. The generation logic itself lives in
 `agents/` and is reused here.
 
 Layout (see the project README for the full map):
@@ -18,6 +18,6 @@ Layout (see the project README for the full map):
     core.py      - re-exports the generation entrypoint from agents.generate
 
   Post-generation (notify + persist)
-    notify.py    - message shape + send via Discord (the only outbound write)
+    notify.py    - message shape + send via email/SMTP (the only outbound write)
     tracking.py  - SQLite: dedup ledger + responses store
 """

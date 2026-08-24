@@ -1,26 +1,29 @@
-"""Notifier: send one Discord push per generated response.
+"""Notifier: send one email per generated response.
 
-The transport lives in `harvester.notify_discord`; this module owns the message
+The transport lives in `harvester.notify_email`; this module owns the message
 *shape* (`format_result`) and re-exports `send` / `configured` so callers have
 one import.
 
-Discord is the only backend. Two earlier ones were removed:
+Email is the only backend. Three were tried before it:
 
-  - ntfy capped a notification body at 4096 bytes and split anything longer
-    into independent pushes that arrived unordered and cut mid-sentence, and
-    ntfy.sh is a public relay serving attachments at guessable URLs.
-  - Telegram handled long messages correctly but `api.telegram.org` is
-    unreachable from the cluster this runs on (TLS reset at handshake, while
-    discord.com, Slack, Pushover and the SMTP relays all responded) — the block
-    is Telegram-specific, so no code change could work around it.
+  - **ntfy** capped a notification body at 4096 bytes and split anything longer
+    into independent pushes that arrived unordered and cut mid-sentence; ntfy.sh
+    is also a public relay serving attachments at guessable URLs.
+  - **Telegram** handled long messages correctly, but `api.telegram.org` is
+    unreachable from the cluster this runs on (TLS reset at handshake) — a
+    Telegram-specific block no code change could work around.
+  - **Discord** worked and was reachable, but still had to split a long
+    refutation between an inline excerpt and a `.md` attachment.
 
-Discord takes content up to 2000 characters inline and anything longer as a
-`.md` attachment, so a long refutation still arrives whole.
+Email has no length limit at all, so the whole refutation arrives untouched in
+one message — and SMTP is permitted almost anywhere HTTPS is, which matters
+after two backends were lost to reachability. It needs no third-party service
+and no extra dependency (stdlib `smtplib`).
 """
 
 from __future__ import annotations
 
-from harvester.notify_discord import configured, send
+from harvester.notify_email import configured, send
 
 __all__ = ["configured", "send", "format_result"]
 

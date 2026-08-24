@@ -123,7 +123,7 @@ data "aws_iam_policy_document" "task" {
     ]
   }
 
-  # Read the runtime secrets (Tavily / Discord / OpenAI) directly too, so the code
+  # Read the runtime secrets (Tavily / SMTP / OpenAI) directly too, so the code
   # can fetch them by name if not injected as env.
   statement {
     sid       = "ReadSecrets"
@@ -165,7 +165,9 @@ locals {
   container_secrets = concat(
     [
       { name = "TAVILY_API_KEY", valueFrom = aws_secretsmanager_secret.this["tavily"].arn },
-      { name = "DISCORD_WEBHOOK_URL", valueFrom = "${aws_secretsmanager_secret.this["discord"].arn}:webhook_url::" },
+      { name = "SMTP_USER", valueFrom = "${aws_secretsmanager_secret.this["smtp"].arn}:user::" },
+      { name = "SMTP_PASSWORD", valueFrom = "${aws_secretsmanager_secret.this["smtp"].arn}:password::" },
+      { name = "EMAIL_TO", valueFrom = "${aws_secretsmanager_secret.this["smtp"].arn}:to::" },
     ],
     var.create_openai_secret ? [
       { name = "OPENAI_API_KEY", valueFrom = aws_secretsmanager_secret.this["openai"].arn },

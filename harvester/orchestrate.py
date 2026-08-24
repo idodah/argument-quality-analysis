@@ -231,9 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.dry_run and not args.no_notify and not notify_mod.configured():
-        print("[orchestrate] ERROR: notifier not configured. Set "
-              "DISCORD_WEBHOOK_URL in your .env, or pass --no-notify / --dry-run.",
-              file=sys.stderr)
+        print("[orchestrate] ERROR: notifier not configured. Set SMTP_USER, "
+              "SMTP_PASSWORD and EMAIL_TO in your .env, or pass "
+              "--no-notify / --dry-run.", file=sys.stderr)
         return 2
 
     run(platforms=platforms, query=args.query, limit=args.limit,
