@@ -1,29 +1,27 @@
-"""Notifier: send one email per generated response.
+"""Notifier: send one ntfy push per generated response.
 
-The transport lives in `harvester.notify_email`; this module owns the message
+The transport lives in `harvester.notify_ntfy`; this module owns the message
 *shape* (`format_result`) and re-exports `send` / `configured` so callers have
 one import.
 
-Email is the only backend. Three were tried before it:
+ntfy is the backend because it is the only one needing no credentials: pick a
+topic name, subscribe to it in the app, done. The alternatives each required an
+account and each hit a different external wall — Telegram is unreachable from
+this cluster (TLS reset at handshake), Gmail SMTP needs 2FA plus an app
+password, and Microsoft has disabled basic SMTP auth for consumer accounts.
 
-  - **ntfy** capped a notification body at 4096 bytes and split anything longer
-    into independent pushes that arrived unordered and cut mid-sentence; ntfy.sh
-    is also a public relay serving attachments at guessable URLs.
-  - **Telegram** handled long messages correctly, but `api.telegram.org` is
-    unreachable from the cluster this runs on (TLS reset at handshake) — a
-    Telegram-specific block no code change could work around.
-  - **Discord** worked and was reachable, but still had to split a long
-    refutation between an inline excerpt and a `.md` attachment.
+Long messages are NOT split. ntfy stores any payload over 4096 bytes as a
+`.txt` attachment and links to it from the notification, so the full refutation
+survives in one push — the earlier version of this module chunked at 4000 bytes
+instead, which is what produced several unordered, mid-sentence pushes.
 
-Email has no length limit at all, so the whole refutation arrives untouched in
-one message — and SMTP is permitted almost anywhere HTTPS is, which matters
-after two backends were lost to reachability. It needs no third-party service
-and no extra dependency (stdlib `smtplib`).
+PRIVACY: ntfy.sh is a public relay — anyone who knows the topic name can read
+the messages. Use a long random topic, or self-host and set NTFY_SERVER.
 """
 
 from __future__ import annotations
 
-from harvester.notify_email import configured, send
+from harvester.notify_ntfy import configured, send
 
 __all__ = ["configured", "send", "format_result"]
 

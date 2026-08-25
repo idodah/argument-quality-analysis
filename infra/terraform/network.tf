@@ -1,5 +1,5 @@
 # VPC for the harvester task. The Fargate task runs in PRIVATE subnets; egress to
-# the few external services it needs (Tavily, SMTP, the Fediverse APIs) goes via a
+# the few external services it needs (Tavily, ntfy, the Fediverse APIs) goes via a
 # NAT gateway, while AWS services (Bedrock, SageMaker, DynamoDB, ECR, S3, Secrets,
 # Logs) are reached over VPC endpoints so that traffic never leaves the VPC.
 # This pairs with the in-code SSRF guard (assert_safe_url) to protect the instance
@@ -96,7 +96,7 @@ resource "aws_route_table_association" "private" {
 
 # ---- Security groups ------------------------------------------------------
 
-# The task: all egress allowed (it needs NAT egress to Tavily/SMTP/Fediverse and
+# The task: all egress allowed (it needs NAT egress to Tavily/ntfy/Fediverse and
 # HTTPS to the interface endpoints); no ingress (nothing connects to it).
 resource "aws_security_group" "task" {
   name_prefix = "${var.name_prefix}-task-"

@@ -295,7 +295,7 @@ The `harvester/` package applies the agent workflow to live data: it searches
 three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
 advancing an antisemitic trope, drafts a factual refutation
 with the same `agents.generate` entrypoint, and pushes it to the operator
-via email. It is **read + draft + notify only** — it never posts back; a human
+via ntfy. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
 
 Detection is deliberately conservative: a cheap keyword prefilter (trope
@@ -308,7 +308,7 @@ than publicly labelling someone a bigot.
 ```
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
-  │ orchestrate.py      │   │ classify.py              │   │ notify.py (email)    │
+  │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
   │  search 3 platforms │──►│  keyword + LLM trope     │──►│ tracking.py          │
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
@@ -328,36 +328,38 @@ uv run python -m harvester.orchestrate --dry-run                # search+classif
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
 ```
 
-**Notifier setup.** Results are emailed to you over **SMTP** — the only
-backend, and the only outbound write the harvester makes.
-
-Email has no length limit, so the entire refutation arrives in the message body
-untouched: searchable, permanent, readable from any device, and no app to
-install. Uses only the standard library, so it adds no dependency.
+**Notifier setup.** Notifications go to **ntfy** — the only backend, and the
+only outbound write the harvester makes.
 
 ```
-SMTP_HOST=smtp.gmail.com     # optional, this is the default
-SMTP_PORT=587                # optional; 587 STARTTLS or 465 implicit SSL
-SMTP_USER=you@gmail.com
-SMTP_PASSWORD=...            # App Password, NOT your account password
-EMAIL_TO=you@gmail.com
-EMAIL_FROM=you@gmail.com     # optional, defaults to SMTP_USER
+NTFY_TOPIC=cmv-<something-long-and-random>
+NTFY_SERVER=https://ntfy.sh    # optional, this is the default
+NTFY_TOKEN=tk_...              # optional, Bearer auth for a protected topic
 ```
 
-For Gmail: turn on 2-Step Verification, then create an **App Password**
-(Google Account → Security → App passwords) — a normal account password is
-rejected. Other providers work the same way; only host/port change.
+Then subscribe to that topic in the [ntfy app](https://ntfy.sh/app) or at
+`https://ntfy.sh/<topic>`. That is the whole setup — no account, no bot, no
+password.
 
-> Three backends were tried before this one, and the reasons are worth keeping.
-> **ntfy** capped a notification at 4096 bytes and split anything longer into
-> independent pushes that arrived unordered and cut mid-sentence. **Telegram**
-> handled long messages properly, but `api.telegram.org` is unreachable from
-> the cluster this runs on — TLS reset at handshake, while Discord, Slack,
-> Pushover and the SMTP relays all responded, so the block was
-> Telegram-specific. **Discord** worked, but still split a long refutation
-> between an inline excerpt and a `.md` attachment. Email is the only transport
-> that needs no length workaround at all, and SMTP is permitted almost anywhere
-> HTTPS is — which matters after losing two backends to reachability.
+Long refutations are **not** split. ntfy stores any payload over 4096 bytes as
+a `.txt` attachment and links to it from the notification, so the full text
+survives in one push. (An earlier version of this module chunked at 4000 bytes
+into several independent pushes, which arrived unordered and cut mid-sentence —
+that is the bug the single-request approach fixes.)
+
+> **Privacy:** ntfy.sh is a public relay. Anyone who knows or guesses the topic
+> name can read every message, and attachments are served at a public URL for
+> about three hours. The drafts quote real people's posts, so use a long random
+> topic name — or self-host and point `NTFY_SERVER` at your own instance.
+
+> Three alternatives were tried and dropped, all for credential or reachability
+> reasons rather than message quality. **Telegram** handled long messages well
+> but `api.telegram.org` is unreachable from the cluster this runs on (TLS reset
+> at handshake). **Discord** worked but needed a webhook and still split long
+> text into an excerpt plus attachment. **Email/SMTP** has no length limit at
+> all, but Gmail requires 2FA plus an app password and Microsoft has disabled
+> basic SMTP auth for consumer accounts. ntfy needs no credentials, which is
+> why it is back.
 
 The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
 `RANKER_PATH`, `HF_TOKEN`).
@@ -382,8 +384,8 @@ Reddit permalink) is recorded in a `seen` store.
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
-| `notify.py` | Message shape (`format_result`) + re-exports the email transport (the only outbound write). |
-| `notify_email.py` | SMTP transport (stdlib) — no length limit, so the full refutation goes in the body. |
+| `notify.py` | Message shape (`format_result`) + re-exports the ntfy transport (the only outbound write). |
+| `notify_ntfy.py` | ntfy transport — one request per message; ntfy stores an oversized body as a linked `.txt`. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |
 
 ### The Fediverse

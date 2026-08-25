@@ -5,10 +5,10 @@
 
 locals {
   # Tavily is always needed; OpenAI only because embeddings stay on OpenAI.
-  # Email/SMTP is the notifier (the only outbound write the task makes).
+  # ntfy is the notifier (the only outbound write the task makes).
   base_secrets = {
     tavily = "${var.name_prefix}/tavily-api-key"
-    smtp   = "${var.name_prefix}/smtp"
+    ntfy   = "${var.name_prefix}/ntfy"
   }
   openai_secret = var.create_openai_secret ? {
     openai = "${var.name_prefix}/openai-api-key"
