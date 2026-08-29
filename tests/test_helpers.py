@@ -256,3 +256,35 @@ def test_no_prompt_still_asks_for_the_old_longer_range():
     from agents import prompts
     for name in ("INITIAL_GEN_USER", "REFINE_SYSTEM", "REFLECT_SYSTEM"):
         assert "3-6 paragraph" not in getattr(prompts, name).lower(), name
+
+
+# --------------------------------------------------------------------------- #
+# orchestrate: query -> individual search terms
+# --------------------------------------------------------------------------- #
+# Lemmy and PieFed pass `q` straight to their APIs, which match it as one
+# phrase. A multi-word query therefore has to be issued as separate searches —
+# the single-call form found nothing on either platform across a week of runs.
+
+def test_search_terms_splits_on_whitespace():
+    from harvester.orchestrate import search_terms
+    assert search_terms("rothschild holohoax zog") == ["rothschild", "holohoax", "zog"]
+
+
+def test_search_terms_keeps_quoted_phrases_whole():
+    # "blood libel" is meaningless split into two searches.
+    from harvester.orchestrate import search_terms
+    assert search_terms('rothschild "blood libel" zog') == [
+        "rothschild", "blood libel", "zog"]
+
+
+def test_search_terms_handles_empty_and_blank():
+    from harvester.orchestrate import search_terms
+    assert search_terms("") == []
+    assert search_terms("   ") == []
+
+
+def test_default_query_is_a_term_list_not_a_phrase():
+    from harvester.orchestrate import DEFAULT_QUERY, search_terms
+    terms = search_terms(DEFAULT_QUERY)
+    assert len(terms) > 1, "the default must issue several searches, not one phrase"
+    assert "blood libel" in terms, "multi-word terms must survive as one term"

@@ -2,7 +2,9 @@
 Lemmy, PieFed, and Reddit, draft factual refutations, and notify the operator.
 
 Each run:
-  1. searches every platform via the Fediverse adapters;
+  1. searches every platform via the Fediverse adapters, ONE query per term
+     (Lemmy/PieFed match `q` as a whole phrase, so a multi-word query issued
+     as a single call matches nothing);
   2. keeps only posts within the age window AND not already answered (the SQLite
      `seen` ledger, keyed on canonical_id — so a federated post on two instances,
      or one seen in a prior run, is never answered twice);
@@ -23,6 +25,7 @@ canonical_id, so a quiet run does no work and no post is ever answered twice.
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 import time
 
@@ -41,7 +44,23 @@ from harvester.fediverse import PLATFORMS, get_platform
 
 from harvester.core import generate_refutation
 
-DEFAULT_QUERY = "rothschild jews control holohoax khazar great replacement"
+# Search terms, one query per term. Quote a multi-word term to keep it whole:
+#   --query 'rothschild "blood libel" holohoax'
+# Kept deliberately short — each term is a separate API call per platform per
+# run, and the prefilter in harvester.classify (26 terms) does the real
+# narrowing once posts are fetched. These are the terms most likely to appear
+# in a post that ADVANCES a trope rather than one merely discussing the topic.
+DEFAULT_QUERY = 'rothschild holohoax khazar "blood libel" "great replacement" zog'
+
+
+def search_terms(query: str) -> list[str]:
+    """Split a query into individual search terms, honouring quoted phrases.
+
+    Lemmy and PieFed match `q` as a whole phrase, so terms have to be issued as
+    separate searches. A quoted group stays one term, since "blood libel" is
+    meaningless split apart.
+    """
+    return [t for t in shlex.split(query) if t.strip()]
 
 # Prepended to the untrusted post body before it enters the generation graph, so
 # the model treats it as the claim to refute — not as instructions. The graph's
@@ -126,16 +145,42 @@ def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
     cutoff = (time.time() - max_age_hours * 3600) if max_age_hours else None
 
     # --- Phase 1: gather eligible candidates across all platforms ---
+    #
+    # One search PER TERM, not one search for the whole query string. The
+    # Lemmy and PieFed adapters pass `q` straight to their APIs, which treat a
+    # multi-word query as a phrase to match in full — so the previous
+    # single-call form ("rothschild jews control holohoax khazar great
+    # replacement") matched nothing on either platform across a week of runs,
+    # while each term on its own returns results immediately. Reddit is
+    # unaffected either way (its adapter splits the query and matches ANY term
+    # against a locally-fetched feed), but running it per-term costs nothing
+    # since the feed is cached after the first call.
+    #
+    # Results are merged and deduped on canonical_id, so a post matching
+    # several terms is only considered once.
+    terms = search_terms(query)
+    if not terms:
+        # Under the per-term loop an empty query would issue zero searches and
+        # silently find nothing, where the old single-call form searched
+        # everything. Fail loudly instead of running a no-op every hour.
+        raise ValueError("query is empty: nothing to search for")
     candidates = []
+    seen_ids: set[str] = set()
     for name in platforms:
         pc = counts["by_platform"].setdefault(name, {"found": 0, "generated": 0})
-        try:
-            posts = adapter(name).search(query, limit=limit)
-        except RuntimeError as e:
-            print(f"[orchestrate] {name} search failed: {e}", file=sys.stderr)
-            counts["errors"] += 1
-            continue
+        posts = []
+        for term in terms:
+            try:
+                posts.extend(adapter(name).search(term, limit=limit))
+            except RuntimeError as e:
+                print(f"[orchestrate] {name} search failed for {term!r}: {e}",
+                      file=sys.stderr)
+                counts["errors"] += 1
         for ref in posts:
+            # A post can match several terms; count and consider it once.
+            if ref.canonical_id in seen_ids:
+                continue
+            seen_ids.add(ref.canonical_id)
             counts["found"] += 1
             pc["found"] += 1
             if cutoff is not None and ref.created_utc and ref.created_utc < cutoff:
@@ -206,7 +251,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--platforms", default=",".join(PLATFORMS),
                         help="Comma-separated subset of: " + ", ".join(PLATFORMS))
-    parser.add_argument("--query", default=DEFAULT_QUERY, help="Search terms.")
+    parser.add_argument("--query", default=DEFAULT_QUERY,
+                        help='Search terms; each is searched separately. '
+                             'Quote to keep a phrase whole: \'zog "blood libel"\'.')
     parser.add_argument("--limit", type=int, default=25, help="Posts per platform.")
     parser.add_argument("--max-generations", type=int, default=3,
                         help="Cap on confirmed trope hits handled this invocation "
