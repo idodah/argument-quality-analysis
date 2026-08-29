@@ -325,7 +325,7 @@ exits.
 # Defaults: ≤3 answers, only posts from the last 24h, Reddit-first then newest.
 uv run python -m harvester.orchestrate
 uv run python -m harvester.orchestrate --dry-run                # search+classify, no spend
-uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
+uv run python -m harvester.orchestrate --platforms lemmy,piefed --query 'rothschild "blood libel"'
 ```
 
 **Notifier setup.** Notifications go to **ntfy** — the only backend, and the
@@ -369,6 +369,25 @@ Each run searches every platform and drops posts older than `--max-age-hours`
 answers, Reddit-first then newest: classify → draft → notify. If nothing new is
 in window, it does nothing.
 
+**Searching is one query per term, not one query for the whole phrase.** Lemmy
+and PieFed pass `q` straight to their APIs, which match a multi-word query as a
+phrase to be found in full — so a six-term query matched *nothing* on either
+platform across a week of live runs, while each term on its own returned results
+immediately. `--query` is therefore split into terms (shell-style quoting keeps
+a multi-word term whole: `--query 'zog "blood libel"'`) and each is searched
+separately, with results merged and deduped on `canonical_id`.
+
+Two consequences worth knowing:
+
+- Keep the term list short. Each term is one API call per platform per run; the
+  26-term prefilter in `classify.py` does the real narrowing once posts are
+  fetched, so the query only has to be broad enough to surface candidates.
+- Reddit fetches its feed **once per run**, not once per term. It has no
+  unauthenticated search API, so the adapter filters a locally-fetched `/new`
+  RSS feed — and re-fetching it per term tripped Reddit's rate limiter (429 on
+  five of six terms, leaving the Reddit arm empty). The feed is identical for
+  every term, so it is cached for the life of the adapter instance.
+
 #### Dedup guarantee
 
 Each post is answered **at most once, ever**. On first sight — before any
@@ -381,7 +400,7 @@ Reddit permalink) is recorded in a `seen` store.
 |------|------|
 | `orchestrate.py` | The entrypoint. Search → dedup/age/sort → classify → generate → notify. |
 | `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
-| `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. |
+| `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. Lemmy/PieFed query their search APIs; Reddit filters a cached `/new` RSS feed locally. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
 | `notify.py` | Message shape (`format_result`) + re-exports the ntfy transport (the only outbound write). |
