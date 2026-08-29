@@ -7,15 +7,6 @@ what makes an argument persuasive at all and trains a model that, given two
 arguments, predicts which one changed the reader's view, then builds an agent
 that drafts a rebuttal and refines it against retrieved evidence.
 
-### Scope: tropes, not politics
-
-The target is a set of documented antisemitic tropes — blood libel, Jewish
-control of banking/media/government (Rothschild, ZOG), Holocaust denial, dual
-loyalty, Great Replacement, the Protocols, and collective blame
-of Jews as a group. These are specific, falsifiable claims with an established
-factual record, which is what makes them a tractable retrieval target: the
-groundedness gate has something concrete to check a draft against.
-
 ### Background: r/changemyview and deltas
 
 The persuasion signal comes from Reddit's [r/changemyview
@@ -346,20 +337,6 @@ a `.txt` attachment and links to it from the notification, so the full text
 survives in one push. (An earlier version of this module chunked at 4000 bytes
 into several independent pushes, which arrived unordered and cut mid-sentence —
 that is the bug the single-request approach fixes.)
-
-> **Privacy:** ntfy.sh is a public relay. Anyone who knows or guesses the topic
-> name can read every message, and attachments are served at a public URL for
-> about three hours. The drafts quote real people's posts, so use a long random
-> topic name — or self-host and point `NTFY_SERVER` at your own instance.
-
-> Three alternatives were tried and dropped, all for credential or reachability
-> reasons rather than message quality. **Telegram** handled long messages well
-> but `api.telegram.org` is unreachable from the cluster this runs on (TLS reset
-> at handshake). **Discord** worked but needed a webhook and still split long
-> text into an excerpt plus attachment. **Email/SMTP** has no length limit at
-> all, but Gmail requires 2FA plus an app password and Microsoft has disabled
-> basic SMTP auth for consumer accounts. ntfy needs no credentials, which is
-> why it is back.
 
 The agent graph also needs its usual keys (`OPENAI_API_KEY`, `TAVILY_API_KEY`,
 `RANKER_PATH`, `HF_TOKEN`).
