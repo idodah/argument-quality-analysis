@@ -35,15 +35,29 @@ class RedditAdapter:
         # Cache the last feed fetch so search() and a following thread() don't
         # double-hit the network within one cycle.
         self._cache: dict[str, PostRef] = {}
+        # The fetched feed itself, reused across search() calls. The
+        # orchestrator issues one search PER TERM, and Reddit has no
+        # unauthenticated search API — every call would otherwise re-fetch the
+        # same /new RSS feed and trip its rate limiter (observed: 429 on 5 of 6
+        # terms, so the Reddit arm returned nothing at all). The feed is
+        # identical for every term, so fetch once per adapter instance and
+        # filter locally; the orchestrator already keeps one instance per run.
+        self._feed: list[PostRef] | None = None
+
+    def _feed_once(self, limit: int) -> list[PostRef]:
+        """The /new feed, fetched at most once per adapter instance."""
+        if self._feed is None:
+            self._feed = [_to_ref(p) for p in fetch_from_rss(limit=max(limit, 25))]
+            for ref in self._feed:
+                self._cache[ref.local_id] = ref
+        return self._feed
 
     def search(self, query: str, limit: int = 25) -> list[PostRef]:
-        """Fetch the newest CMV posts and keep those matching any query term
-        (Reddit has no unauthenticated search, so we filter the feed locally)."""
+        """Keep the newest CMV posts matching any query term (Reddit has no
+        unauthenticated search, so we filter the cached feed locally)."""
         terms = [t.lower() for t in query.split() if t.strip()]
         out: list[PostRef] = []
-        for post in fetch_from_rss(limit=max(limit, 25)):
-            ref = _to_ref(post)
-            self._cache[ref.local_id] = ref
+        for ref in self._feed_once(limit):
             hay = f"{ref.title}\n{ref.body}".lower()
             if not terms or any(t in hay for t in terms):
                 out.append(ref)

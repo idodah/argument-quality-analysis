@@ -62,3 +62,32 @@ def test_piefed_uses_title_field(monkeypatch):
     refs = a.search("israel")
     assert refs[0].title == "PieFed title"
     assert refs[0].canonical_id == "https://x/post/5"
+
+
+def test_reddit_fetches_the_feed_once_across_many_searches(monkeypatch):
+    """The orchestrator searches once PER TERM. Reddit has no search API, so
+    every call would re-fetch the same /new RSS feed — observed tripping its
+    rate limiter (429) on 5 of 6 terms, leaving the Reddit arm empty. The feed
+    is identical for every term, so it must be fetched only once."""
+    from harvester.fediverse import reddit as reddit_mod
+
+    calls = {"n": 0}
+
+    class _Post:
+        def __init__(self, i):
+            self.id = str(i)
+            self.title = f"CMV: rothschild post {i}"
+            self.body = "blood libel and khazar and zog"
+            self.url = f"https://reddit.com/{i}"
+            self.created_utc = 1_700_000_000.0
+            self.permalink = self.url
+
+    def fake_fetch(limit=25):
+        calls["n"] += 1
+        return [_Post(i) for i in range(3)]
+
+    monkeypatch.setattr(reddit_mod, "fetch_from_rss", fake_fetch)
+    a = reddit_mod.RedditAdapter()
+    for term in ("rothschild", "blood libel", "khazar", "zog", "holohoax"):
+        a.search(term, limit=10)
+    assert calls["n"] == 1, f"feed fetched {calls['n']} times; must be 1"
