@@ -1,8 +1,7 @@
-# Argument Quality Analysis
+﻿# Argument Quality Analysis
 
-This project's goal is to **find posts advancing antisemitic tropes on three social
-networks (e.g. reddit) and automatically generate a well-grounded, persuasive
-factual refutation of each one.** To do that well, it first studies
+This project's goal is to **find anti-Israel arguments on three social networks (e.g reddit) and automatically generate a well-grounded,
+persuasive pro-Israel response to each argument.** To do that well, it first studies
 what makes an argument persuasive at all and trains a model that, given two
 arguments, predicts which one changed the reader's view, then builds an agent
 that drafts a rebuttal and refines it against retrieved evidence.
@@ -27,15 +26,14 @@ quality and learn to rank arguments accordingly.
    and a QLoRA fine-tuned Qwen3-8B ranker, all trained to predict which of two
    arguments changed the reader's view.
 3. **Agents** (`agents/`) — a LangGraph workflow that drafts **two** candidate
-   refutations of a given post's trope, then iteratively refines the stronger
+   pro-Israel rebuttals to a given post, then iteratively refines the stronger
    one against retrieved evidence, using Adaptive-RAG, Self-RAG, Corrective-RAG
    (CRAG), and Reflexion patterns.
 
-Supporting these are **RAG** (`rag/`), a two-part retrieval corpus — authoritative
-trope-refutation articles (USHMM, Wikipedia) for the factual record, plus
-delta-awarded CMV comments for persuasive form — ingested into Chroma so the
-agent can ground its rebuttals; the **harvester**
-(`harvester/`), which detects trope-advancing posts live across the three social
+Supporting these are **RAG** (`rag/`), a pro-Israel retrieval corpus of scraped
+delta-awarded CMV-Israel arguments ingested into Chroma so the agent can ground
+its rebuttals; the **harvester**
+(`harvester/`), which detects anti-Israel posts live across the three social
 networks (Reddit, and the Fediverse platforms Lemmy and PieFed) and drafts
 rebuttals with the agent workflow; **infra** (`infra/`), the Terraform + GitHub
 Actions stack that runs the harvester on AWS as a scheduled, serverless job; and
@@ -46,7 +44,7 @@ the package layout.
 
 ```
 preprocessing/   # pair-wise data pipelines (Webis-CMV-20, winning-args-corpus)
-rag/             # trope-refutation retrieval corpus
+rag/             # pro-Israel retrieval corpus
 models/          # TF-IDF baselines, GPT-5.4-nano baseline, Qwen3-8B ranker
 agents/          # LangGraph refinement workflow
 harvester/       # live Reddit/Lemmy/PieFed detector -> draft -> notify
@@ -124,6 +122,20 @@ train on.
 uv run python -m preprocessing.filter_by_tokens
 ```
 
+### The pro-Israel retrieval corpus
+
+The `rag/` package builds the evidence corpus the agent grounds its rebuttals
+in **delta-awarded CMV-Israel arguments**. It scrapes Israel-related CMV
+threads, classifies each argument's stance, and ingests the high-confidence
+pro-Israel comments (i.e. persuasive, real-world rebuttals that already worked on
+a human) into the Chroma collection `pro_israel_corpus`.
+
+```bash
+uv run python -m rag.scrape_cmv_israel      # -> data/cmv_israel_rag.parquet
+uv run python -m rag.classify_stance        # -> data/cmv_israel_rag_pro.parquet
+uv run python -m rag.ingest_rag             # -> .chroma/ pro_israel_corpus
+```
+
 ## Baselines
 
 Simple bag-of-words baselines: TF-IDF features into Logistic Regression /
@@ -185,11 +197,21 @@ patterns** that the wiring implements.
 
 - **generate_initial** — drafts the two initial candidate arguments (`arg_a`,
   `arg_b`) from the topic and original post, in plain prose.
+
+  > **Output length is capped at one or two paragraphs**, and that cap is set in
+  > three prompts that must agree (`agents/prompts.py`): `INITIAL_GEN_USER`
+  > writes to it, `REFINE_SYSTEM` states it as a hard limit that *outranks the
+  > critique*, and `REFLECT_SYSTEM` is told the budget so it critiques as an
+  > editor rather than demanding more material than two paragraphs can hold.
+  > Changing the cap in only one of them makes the nodes fight each other: the
+  > refiner is instructed to ADD every "Missing" bullet, so an unaware reflect
+  > will keep pushing the draft over the limit and burn refinement passes
+  > without converging.
 - **eliminate_loser** — runs one Qwen pairwise comparison on the two raw
   initial drafts and keeps the winner as `argument`; only that survivor
   iterates from here (the loser is dropped).
 - **early_stance_check** — pre-refinement stance gate on the raw
-  survivor. Catches only the off-topic / ad-hominem / political-drift case and regenerates immediately; on-topic survivors fall through to the router.
+  survivor. Catches only the off-topic / anti-Israel case and regenerates immediately; on-topic survivors fall through to the router.
 - **router** — Adaptive-RAG: each pass picks `local`, `web`, or `none` (skip
   retrieval — the current draft is strong enough to refine without new
   evidence); when it picks `web`, the same call also plans the search queries
@@ -197,17 +219,10 @@ patterns** that the wiring implements.
   edges straight to `reflect`, adding no new documents and preserving the
   existing pool, so refinement still runs and can cite previously-grounded facts
   without fetching fresh evidence.
-- **retrieve_local** — queries the Chroma `trope_refutation_corpus` (both halves:
-  reference articles and delta-awarded CMV comments) using the topic + post as
-  the query. Deliberately unfiltered by `source` — filtering to one source value
-  would hide the reference corpus and leave `hallucination_check` with nothing
-  local to verify against.
+- **retrieve_local** — queries the Chroma `pro_israel_corpus` (delta-awarded
+  CMV-Israel arguments) using the topic + post as the query.
 - **retrieve_web** — runs the router's planned queries through Tavily,
-  restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`): Holocaust
-  museums and research institutes (USHMM, Yad Vashem, IHRA), antisemitism
-  monitors (ADL, JPR, Kantor Center), mainstream fact-checkers (AFP, Reuters,
-  AP, Snopes, PolitiFact, Full Fact), and general reference (Wikipedia,
-  Britannica, JSTOR).
+  restricted to a curated domain allow-list (`WEB_ALLOWED_DOMAINS`).
 - **grade_docs** — CRAG per-chunk relevance grading. Keeps the relevant
   subset of retrieved chunks for `reflect`; if none survive, the pool is dropped
   and `web_search=True` routes to the web-search fallback first.
@@ -222,13 +237,13 @@ patterns** that the wiring implements.
   and/or a stance reason from `stance_check`), attaching inline citations
   to evidence-backed claims.
 - **hallucination_check** — Self-RAG binary groundedness check.
-- **stance_check** — classifies the refined draft as `refutes_trope` (→ finalize),
+- **stance_check** — classifies the refined draft as `pro_israel` (→ finalize),
   `neutral_needs_refine` (→ router, refinement loop), or `off_topic_or_anti`
   (→ generate_initial, regeneration loop). It records a `regen_reason` the next
   pass must fix, and sets `gave_up=True` (→ finalize) when both the refinement
   and regeneration budgets are exhausted.
 - **finalize** — terminal node: publishes the refined draft as `generation`, surfaces any
-  grounded / refutation-quality / gave-up warnings (and whether grounding was verified),
+  grounded / pro-Israel / gave-up warnings (and whether grounding was verified),
   and prints the run's trajectory.
 
 ### Graph topology
@@ -251,15 +266,15 @@ Refinement is governed by four independent loops, each with its own cap:
   draft is ungrounded, up to `MAX_GROUND_RETRIES = 2` (2 grounding retries) per
   refinement pass.
 - **Refinement loop** (`stance_check -> router`): if the draft is on-topic but
-  not yet a substantive refutation, it reroutes for another refinement pass,
+  not yet a clearly pro-Israel reply, it reroutes for another refinement pass,
   up to `MAX_REFINE_ITERS = 3` (3 passes — the first pass plus 2 reroutes) per
   generation.
 - **Early-regeneration loop** (`early_stance_check -> generate_initial`): if the
-  raw survivor is off-topic or drifts into political advocacy, both drafts are
-  thrown out and regenerated before any refinement, up to
-  `MAX_EARLY_REGEN_ITERS = 2` (2 regeneration retries) per generation.
+  raw survivor is off-topic or anti-Israel, both drafts are thrown out and
+  regenerated before any refinement, up to `MAX_EARLY_REGEN_ITERS = 2` (2
+  regeneration retries) per generation.
 - **Late-regeneration loop** (`stance_check -> generate_initial`): if a refined
-  draft is still off-topic or politically drifting, both drafts are regenerated, up to
+  draft is still off-topic or anti-Israel, both drafts are regenerated, up to
   `MAX_LATE_REGEN_ITERS = 1` (1 regeneration retry) across the whole run (each
   regeneration resets the refinement counter).
 
@@ -283,24 +298,17 @@ Four patterns are fused into the graph:
 ## Harvester
 
 The `harvester/` package applies the agent workflow to live data: it searches
-three social networks — **Reddit, Lemmy, and PieFed** — for recent posts
-advancing an antisemitic trope, drafts a factual refutation
-with the same `agents.generate` entrypoint, and pushes it to the operator
+three social networks — **Reddit, Lemmy, and PieFed** — for recent anti-Israel
+posts, drafts a pro-Israel
+rebuttal with the same `agents.generate` entrypoint, and pushes it to the operator
 via ntfy. It is **read + draft + notify only** — it never posts back; a human
 reviews and decides whether to post.
-
-Detection is deliberately conservative: a cheap keyword prefilter (trope
-vocabulary, not geopolitics) gates an LLM classifier that is instructed to
-answer "no" whenever a post is criticism of a government or state, is quoting
-or debunking a trope, or is simply ambiguous. Combined with the human-in-the-loop
-boundary above, a false positive costs an operator one discarded draft rather
-than publicly labelling someone a bigot.
 
 ```
         INGESTION                  PIPELINE (per post)            POST-GENERATION
   ┌─────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────┐
   │ orchestrate.py      │   │ classify.py              │   │ notify.py  (ntfy)    │
-  │  search 3 platforms │──►│  keyword + LLM trope     │──►│ tracking.py          │
+  │  search 3 platforms │──►│  keyword + LLM stance    │──►│ tracking.py          │
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
             ▲
@@ -316,7 +324,7 @@ exits.
 # Defaults: ≤3 answers, only posts from the last 24h, Reddit-first then newest.
 uv run python -m harvester.orchestrate
 uv run python -m harvester.orchestrate --dry-run                # search+classify, no spend
-uv run python -m harvester.orchestrate --platforms lemmy,piefed --query 'rothschild "blood libel"'
+uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "israel gaza"
 ```
 
 **Notifier setup.** Notifications go to **ntfy** — the only backend, and the
@@ -332,7 +340,7 @@ Then subscribe to that topic in the [ntfy app](https://ntfy.sh/app) or at
 `https://ntfy.sh/<topic>`. That is the whole setup — no account, no bot, no
 password.
 
-Long refutations are **not** split. ntfy stores any payload over 4096 bytes as
+Long responses are **not** split. ntfy stores any payload over 4096 bytes as
 a `.txt` attachment and links to it from the notification, so the full text
 survives in one push. (An earlier version of this module chunked at 4000 bytes
 into several independent pushes, which arrived unordered and cut mid-sentence —
@@ -348,16 +356,16 @@ in window, it does nothing.
 
 **Searching is one query per term, not one query for the whole phrase.** Lemmy
 and PieFed pass `q` straight to their APIs, which match a multi-word query as a
-phrase to be found in full — so a six-term query matched *nothing* on either
+phrase to be found in full — so a multi-term query matched *nothing* on either
 platform across a week of live runs, while each term on its own returned results
 immediately. `--query` is therefore split into terms (shell-style quoting keeps
-a multi-word term whole: `--query 'zog "blood libel"'`) and each is searched
+a multi-word term whole: `--query 'israel "west bank"'`) and each is searched
 separately, with results merged and deduped on `canonical_id`.
 
 Two consequences worth knowing:
 
 - Keep the term list short. Each term is one API call per platform per run; the
-  26-term prefilter in `classify.py` does the real narrowing once posts are
+  keyword prefilter in `classify.py` does the real narrowing once posts are
   fetched, so the query only has to be broad enough to surface candidates.
 - Reddit fetches its feed **once per run**, not once per term. It has no
   unauthenticated search API, so the adapter filters a locally-fetched `/new`
@@ -379,7 +387,7 @@ Reddit permalink) is recorded in a `seen` store.
 | `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. Lemmy/PieFed query their search APIs; Reddit filters a cached `/new` RSS feed locally. |
 | `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
-| `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
+| `classify.py` | keyword prefilter, then an LLM anti-Israel stance classifier. |
 | `notify.py` | Message shape (`format_result`) + re-exports the ntfy transport (the only outbound write). |
 | `notify_ntfy.py` | ntfy transport — one request per message; ntfy stores an oversized body as a linked `.txt`. |
 | `tracking.py` | The `seen` dedup store + a `responses` store of generated rebuttals. |

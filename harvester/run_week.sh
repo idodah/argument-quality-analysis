@@ -20,7 +20,7 @@
 #   DURATION_SEC   total run window                   (604800 = 7 days)
 #   MAX_GENS       --max-generations per run          (3)
 #   HARVESTER_DB   sqlite ledger path                 (harvester_tracking_local.db)
-#   EXTRA_ARGS     extra flags passed to orchestrate  (e.g. "--query 'rothschild khazar'")
+#   EXTRA_ARGS     extra flags passed to orchestrate  (e.g. "--query 'israel gaza'")
 #   RANKER_DISABLED  set to 1 on a CPU-only node: skips loading the 8B Qwen
 #                    ranker each run (it only breaks the A/B tie at
 #                    eliminate_loser; the stance gate still corrects a bad pick)

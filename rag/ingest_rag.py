@@ -1,9 +1,9 @@
 """
-Ingest the classified trope-refutation CMV arguments into the Chroma vector
-store used by agents.retrieval.LocalRetriever.
+Ingest the classified pro-Israel CMV arguments into the Chroma vector store
+used by agents.retrieval.LocalRetriever.
 
 Reads data/cmv_israel_rag_pro.parquet and adds one document per argument to the
-`trope_refutation_corpus` collection at .chroma/ — the same collection retrieve_local
+`pro_israel_corpus` collection at .chroma/ — the same collection retrieve_local
 queries, so no graph changes are needed.
 
 Each document's page_content is the argument text alone — so the embedding
@@ -33,13 +33,13 @@ ARGUMENT_MAX_CHARS = 6000
 
 
 def main(reset: bool = False) -> None:
-    """Embed the refutation arguments and upsert them into the Chroma collection."""
+    """Embed the pro-Israel arguments and upsert them into the Chroma collection."""
     load_dotenv()
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(f"{INPUT_PARQUET} not found. Run rag.classify_stance first.")
 
     df = pd.read_parquet(INPUT_PARQUET)
-    print(f"Loaded {len(df)} refutation arguments from {INPUT_PARQUET}.")
+    print(f"Loaded {len(df)} pro-Israel arguments from {INPUT_PARQUET}.")
     if df.empty:
         print("Nothing to ingest.")
         return
@@ -70,10 +70,6 @@ def main(reset: bool = False) -> None:
         # page_content = argument alone -> the embedding matches on the argument.
         page_content = (row.argument or "").strip()[:ARGUMENT_MAX_CHARS]
         metadata = {
-            # Distinguishes these from reference docs in the same collection;
-            # LocalRetriever._format labels each kind differently so the
-            # generator knows a CMV comment is persuasive, not authoritative.
-            "source_type": "cmv_delta",
             "source": "cmv_israel",
             "thread_id": str(row.thread_id),
             "comment_id": str(row.comment_id),
