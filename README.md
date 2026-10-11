@@ -212,10 +212,14 @@ patterns** that the wiring implements.
   iterates from here (the loser is dropped).
 - **early_stance_check** — pre-refinement stance gate on the raw
   survivor. Catches only the off-topic / anti-Israel case and regenerates immediately; on-topic survivors fall through to the router.
-- **router** — Adaptive-RAG: each pass picks `local`, `web`, or `none` (skip
-  retrieval — the current draft is strong enough to refine without new
-  evidence); when it picks `web`, the same call also plans the search queries
-  that target the critique's evidence gaps. The `none` route is not a node — it
+- **router** — Adaptive-RAG via native **tool calling**: the LLM is forced to
+  call exactly one of three tools — `search_local_corpus` (→ `local`),
+  `search_web(queries)` (→ `web`), or `skip_retrieval` (→ `none`: the current
+  draft is strong enough to refine without new evidence). When it calls
+  `search_web`, the tool arguments carry the search queries that target the
+  critique's evidence gaps, schema-validated by the provider rather than parsed
+  from free text. The model never executes the tools: the chosen call is
+  dispatched to the matching retriever node by the graph's edges. The `none` route is not a node — it
   edges straight to `reflect`, adding no new documents and preserving the
   existing pool, so refinement still runs and can cite previously-grounded facts
   without fetching fresh evidence.

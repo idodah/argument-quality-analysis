@@ -2,7 +2,7 @@
 
 These are the pure string/parse functions that the offline graph test
 (test_graph_offline.py) stubs out: citation/source extraction, the
-critique-shape guard, the router's JSON parsing, chunk dedup, and the issue
+critique-shape guard, the router's tool-call dispatch, chunk dedup, and the issue
 classifier. They have real branching logic but no LLM/network/model
 dependency, so they are cheap to test exhaustively and a good regression net.
 
@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents.graph.chains.refiner import looks_like_critique
-from agents.graph.chains.router import _parse_decision, _parse_queries
+from agents.graph.chains.router import _decision_from_tool_calls, _queries_from_tool_calls
 from agents.graph.nodes.hallucination_check import _is_citation_shaped
 from agents.graph.nodes.retrieve import _dedupe
 from agents.graph.state import (
@@ -104,26 +104,33 @@ def test_is_citation_shaped(issue, expected):
 
 
 # --------------------------------------------------------------------------- #
-# router.py: LLM-output JSON parsing (with fallbacks)
+# router.py: tool-call -> (mode, queries) dispatch (with fallbacks)
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("text, n, want", [
-    ('{"mode": "web", "queries": ["a", "b", "c", "d"]}', 3, ("web", ["a", "b", "c"])),
-    ('{"mode": "local", "queries": ["a", "b"]}', 3, ("local", [])),  # local drops queries
-    ("the model rambled with no json", 3, ("local", [])),           # unparseable -> safe default
-    ('{"mode": "web", queries: [}', 3, ("local", [])),              # malformed json -> safe default
-    ('{"mode": "web", "queries": "oops"}', 3, ("web", [])),         # non-list queries -> empty
-])
-def test_parse_decision(text, n, want):
-    assert _parse_decision(text, n) == want
+def _call(name, **args):
+    return {"name": name, "args": args}
 
 
-@pytest.mark.parametrize("text, n, want", [
-    ('{"queries": ["x", "y", "z", "w"]}', 2, ["x", "y"]),
-    ('{"queries": ["a", "  ", "b"]}', 5, ["a", "b"]),  # blanks dropped
-    ("nope", 3, []),
+@pytest.mark.parametrize("calls, n, want", [
+    ([_call("search_web", queries=["a", "b", "c", "d"])], 3, ("web", ["a", "b", "c"])),
+    ([_call("search_local_corpus")], 3, ("local", [])),
+    ([_call("skip_retrieval")], 3, ("none", [])),
+    ([_call("search_local_corpus", queries=["a"])], 3, ("local", [])),  # local drops queries
+    ([], 3, ("local", [])),                                  # no tool call -> safe default
+    ([_call("made_up_tool")], 3, ("local", [])),             # unknown tool -> safe default
+    ([_call("search_web", queries="oops")], 3, ("web", [])), # non-list queries -> empty
+    ([_call("skip_retrieval"), _call("search_web", queries=["x"])], 3, ("none", [])),  # first call wins
 ])
-def test_parse_queries(text, n, want):
-    assert _parse_queries(text, n) == want
+def test_decision_from_tool_calls(calls, n, want):
+    assert _decision_from_tool_calls(calls, n) == want
+
+
+@pytest.mark.parametrize("calls, n, want", [
+    ([_call("search_web", queries=["x", "y", "z", "w"])], 2, ["x", "y"]),
+    ([_call("search_web", queries=["a", "  ", "b"])], 5, ["a", "b"]),  # blanks dropped
+    ([], 3, []),
+])
+def test_queries_from_tool_calls(calls, n, want):
+    assert _queries_from_tool_calls(calls, n) == want
 
 
 # --------------------------------------------------------------------------- #

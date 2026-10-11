@@ -1,6 +1,6 @@
-"""Node: Adaptive-RAG router (local | web) + web-query planner.
+"""Node: Adaptive-RAG router (local | web | none) via native tool calling.
 
-The router chain returns both the retrieval mode AND, when mode='web', the
+The router chain has the LLM call one retrieval tool and returns both the mode AND, when mode='web', the
 search queries to use — both in one LLM call.
 
 DIAGNOSTIC OVERRIDE: set FORCE_RETRIEVAL_MODE={local|web} in the env to pin the

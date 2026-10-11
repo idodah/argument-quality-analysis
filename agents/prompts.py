@@ -49,48 +49,42 @@ ROUTER_SYSTEM = (
     "You route retrieval for an argument pipeline defending Israel's position. "
     "Given a draft, the post it answers, and the latest critique, decide which "
     "source of external evidence would best strengthen the draft, OR decide "
-    "that no new retrieval is needed this pass.\n\n"
-    "'mode':\n"
-    "  - 'local': curated local document store; best for historical, legal, or "
-    "well-documented factual claims.\n"
-    "  - 'web':   live web search; best for recent events or current statistics.\n"
-    "  - 'none':  the draft is already strong enough that the next refinement "
-    "pass does not need new evidence — pick this when the critique is mostly "
-    "about structure / framing / cuts / rhetoric, when prior evidence already "
-    "covers the factual claims, or when the draft is already well-cited and "
-    "needs only polish. PREFER 'local' or 'web' on the FIRST pass (when there "
-    "is no prior evidence yet); 'none' is for later passes after retrieval has "
-    "already happened.\n\n"
-    "If (and only if) mode='web', also write exactly {n} short, search-friendly "
-    "queries that target the gaps the critique identified. Each query should "
-    "cover a different angle. For mode='local' and mode='none', queries must "
-    "be an empty list.\n\n"
-    "Return ONLY this JSON, no markdown fences:\n"
-    "  {{\"mode\": \"local|web|none\", \"queries\": [\"q1\", ...]}}"
+    "that no new retrieval is needed this pass, by calling EXACTLY ONE tool:\n\n"
+    "  - search_local_corpus: curated local document store; best for "
+    "historical, legal, or well-documented factual claims.\n"
+    "  - search_web: live web search; best for recent events or current "
+    "statistics. Its queries must target the gaps the critique identified, "
+    "each covering a different angle.\n"
+    "  - skip_retrieval: the draft is already strong enough that the next "
+    "refinement pass does not need new evidence — pick this when the critique "
+    "is mostly about structure / framing / cuts / rhetoric, when prior evidence "
+    "already covers the factual claims, or when the draft is already "
+    "well-cited and needs only polish. PREFER search_local_corpus or search_web "
+    "on the FIRST pass (when there is no prior evidence yet); skip_retrieval is "
+    "for later passes after retrieval has already happened."
 )
 
 ROUTER_USER = (
     "### Post\n{post}\n\n"
     "### Current Draft\n{draft}\n\n"
     "### Previous Critique (if any)\n{critique}\n\n"
-    "### JSON verdict:"
+    "Call exactly one tool."
 )
 
 WEB_QUERY_PLANNER_SYSTEM = (
     "You plan web search queries for an argument pipeline defending Israel's "
     "position. Given the post being answered, the current draft, and the latest "
-    "critique, write exactly {n} short, search-engine-friendly queries that "
-    "target the evidence gaps the critique identified. Each query should cover a "
-    "DIFFERENT angle; prefer recent events or current statistics.\n\n"
-    "Return ONLY this JSON, no markdown fences:\n"
-    "  {{\"queries\": [\"q1\", \"q2\", ...]}}"
+    "critique, call the search_web tool with exactly {n} short, "
+    "search-engine-friendly queries that target the evidence gaps the critique "
+    "identified. Each query should cover a DIFFERENT angle; prefer recent "
+    "events or current statistics."
 )
 
 WEB_QUERY_PLANNER_USER = (
     "### Post\n{post}\n\n"
     "### Current Draft\n{draft}\n\n"
     "### Critique\n{critique}\n\n"
-    "### JSON queries:"
+    "Call search_web with your queries."
 )
 
 GRADER_SYSTEM = (
