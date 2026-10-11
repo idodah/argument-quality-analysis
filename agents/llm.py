@@ -93,3 +93,16 @@ def _as_text(content) -> str:
 def chat(llm, system: str, user: str) -> str:
     resp = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
     return _as_text(resp.content).strip()
+
+
+def call_tools(llm, system: str, user: str, tools: list[dict], tool_choice: str = "any") -> list[dict]:
+    """Native tool calling: bind `tools` (OpenAI-format function schemas) and
+    return the model's tool calls as `[{"name": ..., "args": {...}}, ...]`.
+
+    `tool_choice="any"` forces the model to call one of the tools; a tool name
+    forces that specific tool. Both backends accept both forms (Bedrock Nova
+    supports "any"/"tool" choice; OpenAI maps "any" to "required"). The tools
+    are never executed here — the caller dispatches on the returned calls."""
+    bound = llm.bind_tools(tools, tool_choice=tool_choice)
+    resp = bound.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+    return list(getattr(resp, "tool_calls", None) or [])

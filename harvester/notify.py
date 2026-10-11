@@ -11,7 +11,7 @@ this cluster (TLS reset at handshake), Gmail SMTP needs 2FA plus an app
 password, and Microsoft has disabled basic SMTP auth for consumer accounts.
 
 Long messages are NOT split. ntfy stores any payload over 4096 bytes as a
-`.txt` attachment and links to it from the notification, so the full refutation
+`.txt` attachment and links to it from the notification, so the full response
 survives in one push — the earlier version of this module chunked at 4000 bytes
 instead, which is what produced several unordered, mid-sentence pushes.
 
@@ -27,23 +27,18 @@ __all__ = ["configured", "send", "format_result"]
 
 
 def format_result(title: str, url: str, post_body: str, argument: str,
-                  grounded: bool, refutes_trope: bool, sources: list[str] | None = None) -> str:
+                  grounded: bool, pro_israel: bool, sources: list[str] | None = None) -> str:
     """Build the per-post message: original post + argument + a trailing sources
     list (the argument carries no inline citations; sources are separated out for
-    human review).
-
-    `refutes_trope` keeps its parameter name from the graph's state key; what it
-    now means is "the draft successfully refutes the trope" (see
-    agents/prompts.py), which is how the warning below phrases it.
-    """
+    human review)."""
     flags = []
     if not grounded:
-        # Over-fires on refutations: a negative claim ("X is not supported by
+        # Over-fires on rebuttals: a negative claim ("X is not supported by
         # the record") cannot be positively supported by a retrieved chunk. See
         # the README's grader-limitation note before treating this as fabrication.
         flags.append("NOT grounded (may be a false alarm on negative claims)")
-    if not refutes_trope:
-        flags.append("does NOT clearly refute the trope")
+    if not pro_israel:
+        flags.append("NOT pro-Israel")
     flag_line = f"\n[warnings: {', '.join(flags)}]" if flags else ""
     sources = sources or []
     sources_block = (
@@ -52,7 +47,7 @@ def format_result(title: str, url: str, post_body: str, argument: str,
         if sources else ""
     )
     return (
-        f"NEW TROPE REFUTATION\n"
+        f"NEW CMV RESPONSE\n"
         f"Title: {title}\n"
         f"URL: {url}{flag_line}\n\n"
         f"--- ORIGINAL POST ---\n{post_body}\n\n"

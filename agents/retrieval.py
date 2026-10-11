@@ -2,9 +2,8 @@
 Retrieval backends for the Adaptive-RAG step.
 
 Two arms:
-  - local: Chroma vector store (`trope_refutation_corpus`) — authoritative
-    trope-refutation articles plus delta-awarded CMV comments, ingested by the
-    `rag/` pipeline (`rag.ingest_reference` / `rag.ingest_rag`).
+  - local: Chroma vector store (`pro_israel_corpus`), the delta-awarded
+    CMV-Israel arguments ingested by the `rag/` pipeline (`rag.ingest_rag`).
   - web:   Tavily search. Requires TAVILY_API_KEY in the environment.
 
 Both retrievers expose the same interface: `.retrieve(query, k) -> list[str]`.
@@ -18,7 +17,7 @@ from pathlib import Path
 # Chroma opens its SQLite store read-WRITE even for queries (lock/WAL files), so
 # the corpus dir must be writable.
 CHROMA_DIR = Path(os.environ.get("CHROMA_DIR") or (Path(__file__).resolve().parent.parent / ".chroma"))
-COLLECTION_NAME = "trope_refutation_corpus"
+COLLECTION_NAME = "pro_israel_corpus"
 
 
 def doc_count(store) -> int:
@@ -33,7 +32,7 @@ def doc_count(store) -> int:
 
 class LocalRetriever:
     """Chroma-backed local corpus. Returns empty results until the `rag/`
-    ingestion scripts have populated the `trope_refutation_corpus` collection."""
+    ingestion scripts have populated the `pro_israel_corpus` collection."""
 
     def __init__(self, k: int = 4):
         from langchain_chroma import Chroma
@@ -48,7 +47,7 @@ class LocalRetriever:
         )
         if doc_count(self.store) == 0:
             print(
-                "[LocalRetriever] trope_refutation_corpus is empty; local arm will return "
+                "[LocalRetriever] pro_israel_corpus is empty; local arm will return "
                 "no results. Populate it with `uv run python -m rag.ingest_rag`."
             )
 
@@ -62,23 +61,8 @@ class LocalRetriever:
     def _format(doc) -> str:
         """Reassemble a retrieved argument with its post context for the generator.
 
-        The collection holds two kinds of document, distinguished by the
-        `source_type` metadata field:
-
-          - "cmv_delta"  — a delta-awarded CMV comment. Embeds the argument
-            alone but carries topic/original_post in metadata, which are
-            reassembled here as context.
-          - "reference"  — an authoritative article (USHMM, Wikipedia). Carries
-            a real `url`, so it is emitted with a '[url]' line and is therefore
-            citable; refine/hallucination_check treat a chunk's '[url]' as the
-            only legitimate citation target.
-
-        Provenance is stated explicitly in the label because the two carry very
-        different authority: a CMV comment persuaded one human and is NOT a
-        factual source, while a reference article is. Mislabeling the former as
-        the latter would invite the generator to cite it as evidence.
-
-        A doc with neither shape falls back to the bare page_content.
+        CMV-Israel docs embed the argument alone but carry topic/original_post
+        in metadata; a doc missing both falls back to the bare page_content.
 
         Labels use bracket prefixes ('[topic]', '[original_post]', '[argument]')
         rather than markdown '###' headers. The ### form collides with the
@@ -89,19 +73,6 @@ class LocalRetriever:
         consistent with the web arm's '[url]' / '[title]' header format.
         """
         meta = doc.metadata or {}
-
-        if meta.get("source_type") == "reference":
-            parts = []
-            if meta.get("url"):
-                parts.append(f"[url] {meta['url']}")
-            if meta.get("title"):
-                parts.append(f"[title] {meta['title']}")
-            origin = meta.get("source", "reference")
-            parts.append(
-                f"[reference article — authoritative source: {origin}]\n{doc.page_content}"
-            )
-            return "\n\n".join(parts)
-
         topic = meta.get("topic")
         post = meta.get("original_post")
         if not topic and not post:

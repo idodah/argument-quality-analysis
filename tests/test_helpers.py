@@ -2,7 +2,7 @@
 
 These are the pure string/parse functions that the offline graph test
 (test_graph_offline.py) stubs out: citation/source extraction, the
-critique-shape guard, the router's JSON parsing, chunk dedup, and the issue
+critique-shape guard, the router's tool-call dispatch, chunk dedup, and the issue
 classifier. They have real branching logic but no LLM/network/model
 dependency, so they are cheap to test exhaustively and a good regression net.
 
@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents.graph.chains.refiner import looks_like_critique
-from agents.graph.chains.router import _parse_decision, _parse_queries
+from agents.graph.chains.router import _decision_from_tool_calls, _queries_from_tool_calls
 from agents.graph.nodes.hallucination_check import _is_citation_shaped
 from agents.graph.nodes.retrieve import _dedupe
 from agents.graph.state import (
@@ -104,26 +104,33 @@ def test_is_citation_shaped(issue, expected):
 
 
 # --------------------------------------------------------------------------- #
-# router.py: LLM-output JSON parsing (with fallbacks)
+# router.py: tool-call -> (mode, queries) dispatch (with fallbacks)
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("text, n, want", [
-    ('{"mode": "web", "queries": ["a", "b", "c", "d"]}', 3, ("web", ["a", "b", "c"])),
-    ('{"mode": "local", "queries": ["a", "b"]}', 3, ("local", [])),  # local drops queries
-    ("the model rambled with no json", 3, ("local", [])),           # unparseable -> safe default
-    ('{"mode": "web", queries: [}', 3, ("local", [])),              # malformed json -> safe default
-    ('{"mode": "web", "queries": "oops"}', 3, ("web", [])),         # non-list queries -> empty
-])
-def test_parse_decision(text, n, want):
-    assert _parse_decision(text, n) == want
+def _call(name, **args):
+    return {"name": name, "args": args}
 
 
-@pytest.mark.parametrize("text, n, want", [
-    ('{"queries": ["x", "y", "z", "w"]}', 2, ["x", "y"]),
-    ('{"queries": ["a", "  ", "b"]}', 5, ["a", "b"]),  # blanks dropped
-    ("nope", 3, []),
+@pytest.mark.parametrize("calls, n, want", [
+    ([_call("search_web", queries=["a", "b", "c", "d"])], 3, ("web", ["a", "b", "c"])),
+    ([_call("search_local_corpus")], 3, ("local", [])),
+    ([_call("skip_retrieval")], 3, ("none", [])),
+    ([_call("search_local_corpus", queries=["a"])], 3, ("local", [])),  # local drops queries
+    ([], 3, ("local", [])),                                  # no tool call -> safe default
+    ([_call("made_up_tool")], 3, ("local", [])),             # unknown tool -> safe default
+    ([_call("search_web", queries="oops")], 3, ("web", [])), # non-list queries -> empty
+    ([_call("skip_retrieval"), _call("search_web", queries=["x"])], 3, ("none", [])),  # first call wins
 ])
-def test_parse_queries(text, n, want):
-    assert _parse_queries(text, n) == want
+def test_decision_from_tool_calls(calls, n, want):
+    assert _decision_from_tool_calls(calls, n) == want
+
+
+@pytest.mark.parametrize("calls, n, want", [
+    ([_call("search_web", queries=["x", "y", "z", "w"])], 2, ["x", "y"]),
+    ([_call("search_web", queries=["a", "  ", "b"])], 5, ["a", "b"]),  # blanks dropped
+    ([], 3, []),
+])
+def test_queries_from_tool_calls(calls, n, want):
+    assert _queries_from_tool_calls(calls, n) == want
 
 
 # --------------------------------------------------------------------------- #
@@ -136,20 +143,6 @@ def test_dedupe_by_url_header():
     assert _dedupe([a, b, c]) == [a, c]  # dedup by [url], keep first
 
 
-def test_dedupe_keeps_reference_chunks_sharing_one_url():
-    # Reference articles are split into many chunks that share a url by design.
-    # Keying on the url alone would collapse a whole article to its first
-    # passage, starving hallucination_check of the evidence it verifies against.
-    a = "[url] http://x.com\n\n[title] T\n\n[reference article — authoritative source: ushmm]\nfirst passage"
-    b = "[url] http://x.com\n\n[title] T\n\n[reference article — authoritative source: ushmm]\nsecond passage"
-    assert _dedupe([a, b]) == [a, b]
-
-
-def test_dedupe_still_collapses_identical_reference_chunks():
-    a = "[url] http://x.com\n\n[reference article — authoritative source: ushmm]\nsame passage"
-    assert _dedupe([a, a]) == [a]
-
-
 def test_dedupe_headerless_by_content():
     assert _dedupe(["same", "same", "diff"]) == ["same", "diff"]
 
@@ -160,69 +153,6 @@ def test_dedupe_drops_empty():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
-
-
-# --------------------------------------------------------------------------- #
-# hallucination_check: when the grader is skipped vs. actually run
-# --------------------------------------------------------------------------- #
-# The local corpus holds two kinds of evidence: CMV comments (example arguments
-# — nothing to verify a fact against) and reference articles (authoritative,
-# url-bearing, citable). Skipping the grader on every mode=='local' pass would
-# bypass verification on exactly the evidence the reference corpus supplies, so
-# the skip is keyed on whether citable evidence is actually present.
-#
-# These drive the real node with check_grounding stubbed, so they fail if the
-# skip condition regresses.
-
-REFERENCE_DOC = "[url] https://encyclopedia.ushmm.org/x\n\n[reference article]\nbody"
-CMV_DOC = "[topic] CMV: x\n\n[argument (earned a delta on CMV)]\nbody"
-
-
-def _run_hallucination_check(mode, documents):
-    """Invoke the real node, stubbing the LLM grader to a grounded verdict."""
-    import importlib
-    from unittest import mock
-
-    # NB: the module and the node function share a name, so a plain
-    # `import ... as hc` binds the FUNCTION (re-exported on the package), not
-    # the module. Fetch the module explicitly so patching finds check_grounding.
-    hc = importlib.import_module("agents.graph.nodes.hallucination_check")
-
-    state = {
-        "argument": "a draft",
-        "documents": documents,
-        "retrieval_mode": mode,
-        "history": [],
-        "refine_iter": 0,
-    }
-    with mock.patch.object(hc, "check_grounding",
-                           return_value={"grounded": True, "issues": []}) as grader:
-        out = hc.hallucination_check(state)
-    return out, grader
-
-
-def test_grounding_runs_on_local_reference_evidence():
-    out, grader = _run_hallucination_check("local", [REFERENCE_DOC])
-    assert grader.called, "reference evidence is citable and must be verified"
-    assert out["grounding_verified"] is True
-
-
-def test_grounding_skipped_on_local_cmv_only_evidence():
-    out, grader = _run_hallucination_check("local", [CMV_DOC])
-    assert not grader.called
-    assert out["grounding_verified"] is False
-
-
-def test_grounding_always_skipped_on_none_mode():
-    out, grader = _run_hallucination_check("none", [REFERENCE_DOC])
-    assert not grader.called
-    assert out["grounding_verified"] is False
-
-
-def test_grounding_skipped_when_local_returned_nothing():
-    out, grader = _run_hallucination_check("local", [])
-    assert not grader.called
-    assert out["grounding_verified"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -267,14 +197,14 @@ def test_no_prompt_still_asks_for_the_old_longer_range():
 
 def test_search_terms_splits_on_whitespace():
     from harvester.orchestrate import search_terms
-    assert search_terms("rothschild holohoax zog") == ["rothschild", "holohoax", "zog"]
+    assert search_terms("israel gaza idf") == ["israel", "gaza", "idf"]
 
 
 def test_search_terms_keeps_quoted_phrases_whole():
-    # "blood libel" is meaningless split into two searches.
+    # "west bank" is meaningless split into two searches.
     from harvester.orchestrate import search_terms
-    assert search_terms('rothschild "blood libel" zog') == [
-        "rothschild", "blood libel", "zog"]
+    assert search_terms('israel "west bank" idf') == [
+        "israel", "west bank", "idf"]
 
 
 def test_search_terms_handles_empty_and_blank():
@@ -287,4 +217,3 @@ def test_default_query_is_a_term_list_not_a_phrase():
     from harvester.orchestrate import DEFAULT_QUERY, search_terms
     terms = search_terms(DEFAULT_QUERY)
     assert len(terms) > 1, "the default must issue several searches, not one phrase"
-    assert "blood libel" in terms, "multi-word terms must survive as one term"
