@@ -1,4 +1,4 @@
-"""Initial-draft chain: produces two distinct pro-Israel responses from the post."""
+"""Initial-draft chain: produces two distinct candidate refutations from the post."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def _parse_two_responses(text: str) -> tuple[str, str]:
 
 
 def generate_initial_pair(topic: str, post: str, regen_reason: str = "") -> tuple[str, str]:
-    """Draft two distinct pro-Israel responses to `post`.
+    """Draft two distinct candidate refutations of the trope in `post`.
 
     On regeneration, the previous attempt's failure reason is folded into the
     prompt so the new draft is informed rather than blind — the model knows

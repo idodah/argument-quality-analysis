@@ -67,7 +67,7 @@ def send(text: str, click_url: str | None = None) -> None:
     """
     cfg = _settings()
     headers = {
-        "Title": "New CMV response",
+        "Title": "New trope refutation",
         "Tags": "speech_balloon",
     }
     # Only http(s) links are valid ntfy click/action targets; skip anything else

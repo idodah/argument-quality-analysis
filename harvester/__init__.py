@@ -1,4 +1,5 @@
-"""Harvester: detect anti-Israel posts (Reddit/Lemmy/PieFed), draft replies.
+"""Harvester: detect posts advancing antisemitic tropes (Reddit/Lemmy/PieFed),
+draft factual refutations.
 
 READ + DRAFT + NOTIFY only — it never posts, comments, or votes; the only outbound
 write is a single ntfy push to the operator. The generation logic itself lives in
@@ -13,7 +14,7 @@ Layout (see the project README for the full map):
     fediverse_mcp.py - read-only MCP server (search_posts / get_thread)
 
   Pipeline (per post)
-    classify.py  - keyword prefilter + LLM anti-Israel stance classifier
+    classify.py  - keyword prefilter + LLM antisemitic-trope classifier
     core.py      - re-exports the generation entrypoint from agents.generate
 
   Post-generation (notify + persist)

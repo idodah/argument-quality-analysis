@@ -76,8 +76,8 @@ def test_reddit_fetches_the_feed_once_across_many_searches(monkeypatch):
     class _Post:
         def __init__(self, i):
             self.id = str(i)
-            self.title = f"CMV: israel post {i}"
-            self.body = "palestine and gaza and zionism and idf"
+            self.title = f"CMV: rothschild post {i}"
+            self.body = "blood libel and khazar and zog"
             self.url = f"https://reddit.com/{i}"
             self.created_utc = 1_700_000_000.0
             self.permalink = self.url
@@ -88,6 +88,6 @@ def test_reddit_fetches_the_feed_once_across_many_searches(monkeypatch):
 
     monkeypatch.setattr(reddit_mod, "fetch_from_rss", fake_fetch)
     a = reddit_mod.RedditAdapter()
-    for term in ("israel", "palestine", "gaza", "zionism", "idf"):
+    for term in ("rothschild", "blood libel", "khazar", "zog", "holohoax"):
         a.search(term, limit=10)
     assert calls["n"] == 1, f"feed fetched {calls['n']} times; must be 1"

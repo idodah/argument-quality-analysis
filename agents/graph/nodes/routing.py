@@ -11,7 +11,7 @@ Three independent loops + one forward branch:
               GROUNDING LOOP: not grounded -> refine again, up to
                 MAX_GROUND_RETRIES per refinement pass (reset by router)
               grounded -> stance_check
-                   pro_israel           -> finalize (END)
+                   refutes_trope           -> finalize (END)
                    neutral_needs_refine -> router (REFINEMENT loop,
                      up to MAX_REFINE_ITERS passes per generation)
                    off_topic_or_anti    -> generate_initial (REGENERATION loop,
@@ -63,13 +63,13 @@ def route_after_stance(state: GraphState) -> str:
     - neutral_needs_refine: refinement loop; back to router. The node already
       incremented refine_iter and will give_up via stance=off_topic_or_anti if
       the refinement budget was the trigger.
-    - pro_israel: done; go to finalize. Every path to stance_check is
+    - refutes_trope: done; go to finalize. Every path to stance_check is
       via refine -> hallucination_check, so the grounding pass has already
       run by definition.
     """
     if state.get("gave_up"):
         return "finalize"
-    stance = state.get("stance", "pro_israel")
+    stance = state.get("stance", "refutes_trope")
     if stance == "off_topic_or_anti":
         return "generate_initial"
     if stance == "neutral_needs_refine":

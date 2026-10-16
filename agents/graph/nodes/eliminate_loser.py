@@ -7,8 +7,8 @@ in the graph, made when both drafts are equally unpolished (raw initial), which
 is the fair point to compare them.
 
 The ranker only decides which of the two drafts is *better* — it does not
-verify that the winner is actually pro-Israel. That job belongs to the stance
-gate downstream: if the chosen survivor is off-topic or anti-Israel, stance
+verify that the winner actually refutes the trope. That job belongs to the stance
+gate downstream: if the chosen survivor is off-topic or drifting, stance
 check will trigger a regeneration (and both drafts get replaced). So the stance
 gate effectively overrides the ranker on bad initial pairs.
 
