@@ -143,6 +143,20 @@ def test_dedupe_by_url_header():
     assert _dedupe([a, b, c]) == [a, c]  # dedup by [url], keep first
 
 
+def test_dedupe_keeps_reference_chunks_sharing_one_url():
+    # Reference articles are split into many chunks that share a url by design.
+    # Keying on the url alone would collapse a whole article to its first
+    # passage, starving hallucination_check of the evidence it verifies against.
+    a = "[url] http://x.com\n\n[title] T\n\n[reference article — authoritative source: ushmm]\nfirst passage"
+    b = "[url] http://x.com\n\n[title] T\n\n[reference article — authoritative source: ushmm]\nsecond passage"
+    assert _dedupe([a, b]) == [a, b]
+
+
+def test_dedupe_still_collapses_identical_reference_chunks():
+    a = "[url] http://x.com\n\n[reference article — authoritative source: ushmm]\nsame passage"
+    assert _dedupe([a, a]) == [a]
+
+
 def test_dedupe_headerless_by_content():
     assert _dedupe(["same", "same", "diff"]) == ["same", "diff"]
 
@@ -153,6 +167,69 @@ def test_dedupe_drops_empty():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# --------------------------------------------------------------------------- #
+# hallucination_check: when the grader is skipped vs. actually run
+# --------------------------------------------------------------------------- #
+# The local corpus holds two kinds of evidence: CMV comments (example arguments
+# — nothing to verify a fact against) and reference articles (authoritative,
+# url-bearing, citable). Skipping the grader on every mode=='local' pass would
+# bypass verification on exactly the evidence the reference corpus supplies, so
+# the skip is keyed on whether citable evidence is actually present.
+#
+# These drive the real node with check_grounding stubbed, so they fail if the
+# skip condition regresses.
+
+REFERENCE_DOC = "[url] https://encyclopedia.ushmm.org/x\n\n[reference article]\nbody"
+CMV_DOC = "[topic] CMV: x\n\n[argument (earned a delta on CMV)]\nbody"
+
+
+def _run_hallucination_check(mode, documents):
+    """Invoke the real node, stubbing the LLM grader to a grounded verdict."""
+    import importlib
+    from unittest import mock
+
+    # NB: the module and the node function share a name, so a plain
+    # `import ... as hc` binds the FUNCTION (re-exported on the package), not
+    # the module. Fetch the module explicitly so patching finds check_grounding.
+    hc = importlib.import_module("agents.graph.nodes.hallucination_check")
+
+    state = {
+        "argument": "a draft",
+        "documents": documents,
+        "retrieval_mode": mode,
+        "history": [],
+        "refine_iter": 0,
+    }
+    with mock.patch.object(hc, "check_grounding",
+                           return_value={"grounded": True, "issues": []}) as grader:
+        out = hc.hallucination_check(state)
+    return out, grader
+
+
+def test_grounding_runs_on_local_reference_evidence():
+    out, grader = _run_hallucination_check("local", [REFERENCE_DOC])
+    assert grader.called, "reference evidence is citable and must be verified"
+    assert out["grounding_verified"] is True
+
+
+def test_grounding_skipped_on_local_cmv_only_evidence():
+    out, grader = _run_hallucination_check("local", [CMV_DOC])
+    assert not grader.called
+    assert out["grounding_verified"] is False
+
+
+def test_grounding_always_skipped_on_none_mode():
+    out, grader = _run_hallucination_check("none", [REFERENCE_DOC])
+    assert not grader.called
+    assert out["grounding_verified"] is False
+
+
+def test_grounding_skipped_when_local_returned_nothing():
+    out, grader = _run_hallucination_check("local", [])
+    assert not grader.called
+    assert out["grounding_verified"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -197,14 +274,14 @@ def test_no_prompt_still_asks_for_the_old_longer_range():
 
 def test_search_terms_splits_on_whitespace():
     from harvester.orchestrate import search_terms
-    assert search_terms("israel gaza idf") == ["israel", "gaza", "idf"]
+    assert search_terms("rothschild holohoax zog") == ["rothschild", "holohoax", "zog"]
 
 
 def test_search_terms_keeps_quoted_phrases_whole():
-    # "west bank" is meaningless split into two searches.
+    # "blood libel" is meaningless split into two searches.
     from harvester.orchestrate import search_terms
-    assert search_terms('israel "west bank" idf') == [
-        "israel", "west bank", "idf"]
+    assert search_terms('rothschild "blood libel" zog') == [
+        "rothschild", "blood libel", "zog"]
 
 
 def test_search_terms_handles_empty_and_blank():
@@ -217,3 +294,4 @@ def test_default_query_is_a_term_list_not_a_phrase():
     from harvester.orchestrate import DEFAULT_QUERY, search_terms
     terms = search_terms(DEFAULT_QUERY)
     assert len(terms) > 1, "the default must issue several searches, not one phrase"
+    assert "blood libel" in terms, "multi-word terms must survive as one term"

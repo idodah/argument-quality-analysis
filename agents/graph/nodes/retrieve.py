@@ -55,7 +55,13 @@ def _dedupe(chunks: list[str]) -> list[str]:
             continue
         key = c
         first_line = c.split("\n", 1)[0]
-        if first_line.startswith("[url] "):
+        if first_line.startswith("[url] ") and "[reference article" not in c:
+            # A web result is one chunk per URL, so the URL identifies it and a
+            # repeat URL is a real duplicate. Local reference articles are the
+            # exception: they are split into many chunks that deliberately
+            # SHARE a url, so keying on the url alone would collapse a whole
+            # article down to its first passage. Those fall through to
+            # content-keying below.
             key = first_line[len("[url] "):].strip()
         if key in seen:
             continue
@@ -65,11 +71,17 @@ def _dedupe(chunks: list[str]) -> list[str]:
 
 
 def retrieve_local(state: GraphState) -> GraphState:
-    # Query with the topic + the post we're arguing against, so we retrieve
-    # CMV arguments that successfully countered a similar opposing position.
+    # Query with the topic + the post we're refuting, so we retrieve evidence
+    # bearing on the specific trope it advances.
+    #
+    # No `where` filter: the collection holds both reference articles
+    # (source="wikipedia"/"ushmm") and CMV comments (source="cmv_israel"), and
+    # both are legitimate evidence. Filtering to a single source value here
+    # would silently hide the reference corpus, leaving hallucination_check
+    # with nothing local to verify against.
     post = state.get("original_post", "") or ""
     query = f"{state['topic']}\n\n{post[:600]}"
-    chunks = _local().retrieve(query, k=LOCAL_K, where={"source": "cmv_israel"})
+    chunks = _local().retrieve(query, k=LOCAL_K)
     print(f"[retrieve_local] {len(chunks)} chunks")
     return {"documents": chunks}
 

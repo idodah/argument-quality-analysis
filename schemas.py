@@ -22,3 +22,19 @@ class RagArgument(BaseModel):
     argument: str
     score: int
     date: date | None
+
+class ReferenceDocument(BaseModel):
+    """An authoritative document refuting an antisemitic trope.
+
+    Distinct from RagArgument: these carry no delta signal (nobody upvoted or
+    was persuaded by them) but are factually authoritative, so the agent cites
+    them for the historical record while CMV arguments supply persuasive form.
+    `trope` names which documented myth the document addresses.
+    """
+    doc_id: str
+    source: str          # "wikipedia" | "ushmm"
+    trope: str
+    title: str
+    url: str
+    text: str
+    retrieved: date | None
