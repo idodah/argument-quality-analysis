@@ -13,6 +13,11 @@ Each run:
      to `--max-generations` of them (classify -> draft -> notify).
 Read + draft + notify ONLY — never posts back.
 
+All platform reads go through the fediverse-reader MCP server
+(harvester.fediverse_mcp): the orchestrator is an MCP client that spawns it over
+stdio and calls its `search_posts` / `get_thread` tools (harvester.mcp_client).
+`--direct` bypasses MCP and imports the adapters in-process.
+
     uv run python -m harvester.orchestrate                  # defaults: 3 max, last 24h
     uv run python -m harvester.orchestrate --dry-run        # search + classify, no drafting
     uv run python -m harvester.orchestrate --platforms lemmy,piefed --query "rothschild khazar"
@@ -125,21 +130,44 @@ def _sort_key(ref):
 
 def run(platforms=PLATFORMS, query: str = DEFAULT_QUERY, limit: int = 25,
         max_generations: int | None = 3, max_age_hours: float = 24.0,
-        dry_run: bool = False, do_notify: bool = True) -> dict:
+        dry_run: bool = False, do_notify: bool = True, use_mcp: bool = True) -> dict:
     """Search every platform, gather in-window unseen posts, then answer up to
-    `max_generations` of them (Reddit-first, newest-next). Returns run counts."""
+    `max_generations` of them (Reddit-first, newest-next). Returns run counts.
+
+    With `use_mcp` (the default) every platform read goes through the
+    fediverse-reader MCP server — spawned over stdio for this run — as
+    `search_posts` / `get_thread` tool calls. `use_mcp=False` imports the
+    adapters in-process instead (debug fallback; same results).
+    """
+    if not use_mcp:
+        adapters: dict = {}
+
+        def direct(name: str):
+            # One adapter per platform, reused across BOTH phases: the Reddit
+            # adapter caches the feed from search() so thread() can serve it.
+            if name not in adapters:
+                adapters[name] = get_platform(name)
+            return adapters[name]
+
+        return _run(direct, platforms, query, limit, max_generations,
+                    max_age_hours, dry_run, do_notify)
+
+    from harvester.mcp_client import MCPHarvesterClient
+
+    # The server keeps one adapter per platform for the session, so the Reddit
+    # feed cache is shared across search_posts / get_thread calls exactly as in
+    # the in-process path.
+    with MCPHarvesterClient() as client:
+        print(f"[orchestrate] MCP session open; server tools: {client.tools}")
+        return _run(client.platform, platforms, query, limit, max_generations,
+                    max_age_hours, dry_run, do_notify)
+
+
+def _run(adapter, platforms, query, limit, max_generations, max_age_hours,
+         dry_run, do_notify) -> dict:
+    """The run itself; `adapter(name)` returns something with search()/thread()."""
     counts = {"found": 0, "seen": 0, "too_old": 0, "trope": 0,
               "generated": 0, "errors": 0, "by_platform": {}}
-
-    # One adapter instance per platform, reused across BOTH phases. The Reddit
-    # adapter caches the feed from search() so thread() can serve it without a
-    # second fetch — that cache is only shared if we keep the same instance.
-    adapters: dict = {}
-
-    def adapter(name: str):
-        if name not in adapters:
-            adapters[name] = get_platform(name)
-        return adapters[name]
 
     # Only consider posts created within the last `max_age_hours`. 0/None disables.
     cutoff = (time.time() - max_age_hours * 3600) if max_age_hours else None
@@ -266,6 +294,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Search + classify only. No generation, notify, or record.")
     parser.add_argument("--no-notify", action="store_true",
                         help="Generate + record but skip the push notification.")
+    parser.add_argument("--direct", action="store_true",
+                        help="Bypass the MCP server and call the platform adapters "
+                             "in-process (debug fallback).")
     args = parser.parse_args(argv)
 
     # --max-generations 0 means unlimited; map to None for run().
@@ -284,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
 
     run(platforms=platforms, query=args.query, limit=args.limit,
         max_generations=max_gen, max_age_hours=args.max_age_hours,
-        dry_run=args.dry_run, do_notify=not args.no_notify)
+        dry_run=args.dry_run, do_notify=not args.no_notify, use_mcp=not args.direct)
     return 0
 
 

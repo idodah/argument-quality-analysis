@@ -12,6 +12,7 @@ Layout (see the project README for the full map):
     fetch.py         - fetch_from_rss(): read the live Reddit Atom feed
     fediverse/       - platform adapters (Lemmy/PieFed/Reddit) behind one interface
     fediverse_mcp.py - read-only MCP server (search_posts / get_thread)
+    mcp_client.py    - MCP client: orchestrate reads every platform through the server
 
   Pipeline (per post)
     classify.py  - keyword prefilter + LLM antisemitic-trope classifier

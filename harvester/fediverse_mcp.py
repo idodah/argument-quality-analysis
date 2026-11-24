@@ -11,18 +11,49 @@ Tools:
 
 Run (stdio transport):
     uv run python -m harvester.fediverse_mcp
+
+The scheduled pipeline (harvester.orchestrate) is this server's main client: it
+spawns it over stdio via harvester.mcp_client and does all platform reads
+through these tools. Interactive MCP hosts (Claude Code / Desktop) can attach to
+the same server for manual exploration.
 """
 
 from __future__ import annotations
 
+import os
+import time
+
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-from harvester.fediverse import PLATFORMS, get_platform
+from harvester.fediverse import PLATFORMS, Platform, get_platform
 
 load_dotenv()
 
-mcp = FastMCP("fediverse-reader")
+# WARNING, not the default INFO: FastMCP logs every request to stderr, which the
+# orchestrator inherits — a line per search term per platform in CloudWatch.
+mcp = FastMCP("fediverse-reader", log_level="WARNING")
+
+# Adapter instances are kept per platform for the life of the server, so state
+# the adapters carry between calls survives across tool calls: the Reddit
+# adapter fetches the RSS feed ONCE and serves every search term and every
+# get_thread from it (a fresh adapter per call would re-hit the feed per term
+# -> 429s, and get_thread would miss the post cache). A long-lived interactive
+# session would otherwise see a stale feed forever, so instances expire after
+# ADAPTER_TTL_SECONDS (default 10 min — longer than one orchestrator run).
+_ADAPTER_TTL = float(os.environ.get("ADAPTER_TTL_SECONDS", "600"))
+_adapters: dict[str, tuple[float, Platform]] = {}
+
+
+def _adapter(platform: str) -> Platform:
+    """The cached adapter for `platform`, recreated once it is older than the TTL."""
+    key = platform.lower()
+    now = time.monotonic()
+    hit = _adapters.get(key)
+    if hit is None or now - hit[0] > _ADAPTER_TTL:
+        hit = (now, get_platform(key))  # raises RuntimeError on unknown platform
+        _adapters[key] = hit
+    return hit[1]
 
 
 @mcp.tool()
@@ -38,7 +69,7 @@ def search_posts(platform: str, query: str, limit: int = 25) -> list[dict]:
     for get_thread, title, body, url, created_utc), or an error dict on failure.
     """
     try:
-        return [p.to_dict() for p in get_platform(platform).search(query, limit=limit)]
+        return [p.to_dict() for p in _adapter(platform).search(query, limit=limit)]
     except RuntimeError as e:
         return [{"error": str(e), "platform": platform}]
 
@@ -50,7 +81,7 @@ def get_thread(platform: str, local_id: str) -> dict:
     Returns {post: {...}, comments: [...]}, or {error: ...} on failure.
     """
     try:
-        return get_platform(platform).thread(local_id).to_dict()
+        return _adapter(platform).thread(local_id).to_dict()
     except RuntimeError as e:
         return {"error": str(e), "platform": platform, "local_id": local_id}
 
