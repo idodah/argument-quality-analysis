@@ -308,7 +308,7 @@ than publicly labelling someone a bigot.
   │  dedup + age + sort │   │ ─► agents.generate       │   │  (SQLite / DynamoDB) │
   └─────────────────────┘   └──────────────────────────┘   └──────────────────────┘
             ▲
-   fediverse/ adapters (Lemmy, PieFed, Reddit) — also exposed read-only via fediverse_mcp.py
+   MCP client ══stdio══► fediverse_mcp.py (MCP server) ──► fediverse/ adapters (Lemmy, PieFed, Reddit)
 ```
 
 ### Run it
@@ -320,6 +320,7 @@ exits.
 # Defaults: ≤3 answers, only posts from the last 24h, Reddit-first then newest.
 uv run python -m harvester.orchestrate
 uv run python -m harvester.orchestrate --dry-run                # search+classify, no spend
+uv run python -m harvester.orchestrate --direct                 # bypass MCP (adapters in-process)
 uv run python -m harvester.orchestrate --platforms lemmy,piefed --query 'rothschild "blood libel"'
 ```
 
@@ -382,7 +383,8 @@ Reddit permalink) is recorded in a `seen` store.
 | `orchestrate.py` | The entrypoint. Search → dedup/age/sort → classify → generate → notify. |
 | `fetch.py` | `fetch_from_rss()`: read the live Reddit feed into `Post` objects (HTML → text). |
 | `fediverse/` | Platform adapters behind one `Platform` interface (`base.py`, `lemmy.py`, `piefed.py`, `reddit.py`); `get_platform(name)` registry. Lemmy/PieFed query their search APIs; Reddit filters a cached `/new` RSS feed locally. |
-| `fediverse_mcp.py` | **MCP server** (read-only): `search_posts` / `get_thread` over the adapters. |
+| `fediverse_mcp.py` | **MCP server** (read-only): `list_platforms` / `search_posts` / `get_thread` over the adapters. |
+| `mcp_client.py` | **MCP client** the orchestrator uses: spawns the server over stdio and wraps its tools as sync `search()` / `thread()`. |
 | `classify.py` | keyword prefilter, then an LLM antisemitic-trope classifier (criticism of a government is excluded by design). |
 | `notify.py` | Message shape (`format_result`) + re-exports the ntfy transport (the only outbound write). |
 | `notify_ntfy.py` | ntfy transport — one request per message; ntfy stores an oversized body as a linked `.txt`. |
@@ -394,9 +396,38 @@ Reddit's data API is approval-gated, but its public `/r/changemyview/new/.rss`
 feed and the Lemmy/PieFed APIs are free to read unauthenticated. Lemmy and PieFed
 are Reddit-like federated platforms.
 
-`fediverse_mcp.py` exposes the read tools (`search_posts`, `get_thread`) over MCP.
-The tools are read-only; the orchestrator itself currently drives them as a
-deterministic loop.
+### MCP: how the orchestrator reads the platforms
+
+All platform reads go through an MCP server. `fediverse_mcp.py` is a FastMCP
+server (`fediverse-reader`) with three read-only tools: `list_platforms`,
+`search_posts(platform, query, limit)` and `get_thread(platform, local_id)`.
+The orchestrator is its MCP client (`mcp_client.py`):
+
+```
+orchestrate.py ── MCPHarvesterClient ══ stdio / JSON-RPC ══► fediverse_mcp.py ──► adapters ──► Lemmy / PieFed / Reddit
+```
+
+- **Transport.** The client spawns the server as a subprocess for each run
+  (`python -m harvester.fediverse_mcp`), passing its environment through.
+  The MCP SDK's `stdio_client` would otherwise give the child only `PATH`/`HOME`.
+  It then does the `initialize` handshake and checks with `list_tools` that
+  `search_posts` and `get_thread` are offered before any search.
+- **Sync over async.** The SDK is async and the orchestrator is a plain loop.
+  The stdio transport's task groups must be opened and closed by the same task,
+  so one background thread runs an event loop that owns the session. The sync
+  `search()` and `thread()` calls submit tool calls to it.
+- **One server, three platforms.** `platform` is a tool argument, not a
+  separate server. Each adapter maps its API (Lemmy `/api/v3`, PieFed
+  `/api/alpha`, Reddit RSS) onto the same `PostRef` and `Thread` shapes.
+- **Stateful adapters.** The server keeps one adapter per platform per session,
+  with a 10-minute TTL (`ADAPTER_TTL_SECONDS`), so Reddit's feed is fetched once
+  and `get_thread` hits the cache `search_posts` filled.
+- **Errors as data.** An adapter failure comes back as `{"error": ...}`, which
+  an LLM host can reason about. The client turns it back into `RuntimeError`.
+- `--direct` bypasses MCP and imports the adapters in-process, for debugging.
+
+Any MCP host can attach to the same server for manual exploration, e.g.
+`claude mcp add fediverse-reader -- uv run python -m harvester.fediverse_mcp`.
 
 ## Deployment
 
